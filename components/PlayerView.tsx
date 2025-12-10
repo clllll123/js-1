@@ -4,7 +4,7 @@ import { AgeGroup, Product, ShopLevelConfig, LogEntry, CustomerCard, PlayerState
 import { SHOP_LEVELS_JUNIOR, SHOP_LEVELS_SENIOR, PRODUCTS_JUNIOR_POOL, PRODUCTS_SENIOR_POOL, MAX_TURNS_JUNIOR, MAX_TURNS_SENIOR, getNegotiationDeck, FOLLOW_UP_ACTIONS, RECOVERY_ACTIONS, DISTRACTOR_ACTIONS, CLOSING_ACTION, CUTE_LOGOS } from '../constants';
 import { analyzePerformance, interactWithAICustomer } from '../services/geminiService';
 import BusinessChart from './BusinessChart';
-import { Coins, ArrowLeft, Handshake, AlertCircle, Store, Search, User, X, RefreshCw, TrendingUp, Truck, Warehouse, Coffee, Megaphone, Star, Smile, Meh, Frown, AlertTriangle, Info, CheckCircle, Wifi, Send, Mic, LogOut, Tag, TrendingDown, Target, BarChart2, Flame, Upload, ArrowUp, ArrowDown } from 'lucide-react';
+import { Coins, ArrowLeft, Handshake, AlertCircle, Store, Search, User, X, RefreshCw, TrendingUp, Truck, Warehouse, Coffee, Megaphone, Star, Smile, Meh, Frown, AlertTriangle, Info, CheckCircle, Wifi, Send, Mic, LogOut, Tag, TrendingDown, Target, BarChart2, Flame, Upload, ArrowUp, ArrowDown, Bell } from 'lucide-react';
 
 interface PlayerViewProps {
   ageGroup: AgeGroup;
@@ -20,6 +20,7 @@ interface PlayerViewProps {
   onCustomerAction: (customerId: string, result: 'satisfied' | 'angry') => void;
   isRoundOver: boolean;
   marketFluctuation: MarketFluctuation | null;
+  recentEvents?: string[]; // Added: Pass full event list to detect new ones
 }
 
 interface LocalPlayerState {
@@ -111,7 +112,7 @@ const getDemandTier = (cat: ProductCategory, event: GameEvent): 'high' | 'medium
     return 'low';
 };
 
-const PlayerView: React.FC<PlayerViewProps> = ({ ageGroup, onBack, onJoin, onUpdate, isGameStarted, onGameEvent, marketConfig, currentGlobalEvent, globalRoundNumber, serverPlayerState, onCustomerAction, isRoundOver, marketFluctuation }) => {
+const PlayerView: React.FC<PlayerViewProps> = ({ ageGroup, onBack, onJoin, onUpdate, isGameStarted, onGameEvent, marketConfig, currentGlobalEvent, globalRoundNumber, serverPlayerState, onCustomerAction, isRoundOver, marketFluctuation, recentEvents = [] }) => {
   const isJunior = ageGroup === AgeGroup.Junior;
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -194,6 +195,27 @@ const PlayerView: React.FC<PlayerViewProps> = ({ ageGroup, onBack, onJoin, onUpd
   const [chatInput, setChatInput] = useState('');
   const [isAIThinking, setIsAIThinking] = useState(false);
   const [thinkingText, setThinkingText] = useState('');
+
+  // Toast / Announcement State
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const lastEventRef = useRef<string | null>(null);
+
+  // --- VISUAL BROADCAST LOGIC ---
+  useEffect(() => {
+      if (recentEvents.length > 0) {
+          const newest = recentEvents[0];
+          // Only show if it's a new message
+          if (newest !== lastEventRef.current) {
+              lastEventRef.current = newest;
+              setToastMessage(newest);
+              setShowToast(true);
+              const timer = setTimeout(() => setShowToast(false), 5000); // Hide after 5s
+              return () => clearTimeout(timer);
+          }
+      }
+  }, [recentEvents]);
+
 
   // --- FORCED ROUND END HANDLING ---
   useEffect(() => {
@@ -1038,7 +1060,23 @@ const PlayerView: React.FC<PlayerViewProps> = ({ ageGroup, onBack, onJoin, onUpd
 
   // --- REDESIGNED HEADER ---
   return (
-    <div className={`h-[100dvh] w-full ${theme.bg} flex flex-col font-sans overflow-hidden`}>
+    <div className={`h-[100dvh] w-full ${theme.bg} flex flex-col font-sans overflow-hidden relative`}>
+        
+        {/* --- BROADCAST TOAST --- */}
+        {showToast && (
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[90%] max-w-sm z-50 animate-in slide-in-from-top-4 fade-in duration-300">
+                <div className={`p-4 rounded-xl shadow-2xl border-2 flex items-start gap-3 backdrop-blur-md ${isJunior ? 'bg-yellow-50/95 border-yellow-300' : 'bg-slate-800/95 border-blue-500'}`}>
+                    <div className={`p-2 rounded-full shrink-0 ${isJunior ? 'bg-yellow-200 text-yellow-700' : 'bg-blue-900 text-blue-300'}`}>
+                        <Bell size={20} className="animate-swing"/>
+                    </div>
+                    <div>
+                        <div className={`text-xs font-bold uppercase tracking-wider mb-1 ${isJunior ? 'text-yellow-600' : 'text-blue-400'}`}>市场快讯 (Broadcast)</div>
+                        <div className={`text-sm font-bold leading-relaxed ${isJunior ? 'text-gray-900' : 'text-white'}`}>{toastMessage}</div>
+                    </div>
+                </div>
+            </div>
+        )}
+
         <div className={`${theme.cardBg} px-4 py-4 shadow-md border-b-2 ${theme.border} shrink-0 flex justify-between items-center z-30`}>
             <div className="flex items-center gap-4 overflow-hidden flex-1">
                 <div className={`w-14 h-14 rounded-full flex items-center justify-center text-3xl border-2 ${theme.border} shrink-0 bg-gray-50 overflow-hidden shadow-sm`}>

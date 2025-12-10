@@ -82,6 +82,38 @@ const App: React.FC = () => {
   const [aiCustomerPool, setAiCustomerPool] = useState<CustomerCard[]>([]);
   const [isFetchingAI, setIsFetchingAI] = useState(false);
 
+  // REF FOR NETWORK LOOP (PERFORMANCE OPTIMIZATION)
+  // We keep a ref to the latest state so the broadcast interval can read it without triggering re-renders
+  const gameStateRef = useRef({
+      eventName,
+      isGameStarted,
+      isRunning,
+      timeLeft,
+      roundNumber,
+      currentGlobalEvent,
+      marketConfig,
+      marketFluctuation,
+      connectedPlayers,
+      recentEvents
+  });
+
+  // Keep Ref Syncing
+  useEffect(() => {
+      gameStateRef.current = {
+          eventName,
+          isGameStarted,
+          isRunning,
+          timeLeft,
+          roundNumber,
+          currentGlobalEvent,
+          marketConfig,
+          marketFluctuation,
+          connectedPlayers,
+          recentEvents
+      };
+  }, [eventName, isGameStarted, isRunning, timeLeft, roundNumber, currentGlobalEvent, marketConfig, marketFluctuation, connectedPlayers, recentEvents]);
+
+
   // Function to replenish pool
   const replenishCustomerPool = async (count: number, forceEvent?: GameEvent) => {
       // Allow concurrent fetches if manually triggered? No, safer to lock.
@@ -154,25 +186,39 @@ const App: React.FC = () => {
       }
   }, [timeLeft, isRunning, isGameStarted, isRoundSummary]);
 
-  // --- NETWORKING: BROADCAST LOOP (HOST) ---
+  // --- NETWORKING: BROADCAST LOOP (OPTIMIZED) ---
+  // Using a dedicated interval instead of reacting to every state change.
+  // This limits network traffic to 1 message per second regardless of how many players join.
   useEffect(() => {
       if ((role === 'teacher' || role === 'screen') && isGameStarted) {
-          // Broadcast state every second or when key things change
-          const payload: GameSyncPayload = {
-              eventName, // Sync Title
-              isGameStarted,
-              isRunning,
-              timeLeft,
-              roundNumber,
-              currentGlobalEvent,
-              marketConfig,
-              marketFluctuation,
-              players: connectedPlayers,
-              recentEvents
-          };
-          p2p.broadcastGameSync(payload);
+          const interval = setInterval(() => {
+              const current = gameStateRef.current;
+              
+              // DATA SLIMMING: Remove heavy logs from the broadcast to save bandwidth
+              // Students maintain their own logs locally.
+              const lightweightPlayers = current.connectedPlayers.map(p => ({
+                  ...p,
+                  logs: [] 
+              }));
+
+              const payload: GameSyncPayload = {
+                  eventName: current.eventName,
+                  isGameStarted: current.isGameStarted,
+                  isRunning: current.isRunning,
+                  timeLeft: current.timeLeft,
+                  roundNumber: current.roundNumber,
+                  currentGlobalEvent: current.currentGlobalEvent,
+                  marketConfig: current.marketConfig,
+                  marketFluctuation: current.marketFluctuation,
+                  players: lightweightPlayers,
+                  recentEvents: current.recentEvents
+              };
+              p2p.broadcastGameSync(payload);
+          }, 1000); // 1Hz Broadcast Rate
+
+          return () => clearInterval(interval);
       }
-  }, [timeLeft, isRunning, connectedPlayers, currentGlobalEvent, marketFluctuation, isGameStarted, role, eventName]);
+  }, [isGameStarted, role]); // Only restart loop if role or game status fundamental changes
 
 
   // Unified function to distribute cards using pool
@@ -528,6 +574,7 @@ const App: React.FC = () => {
                         onCustomerAction={(cid, res) => simulatorPlayer && handleCustomerAction(simulatorPlayer.id, cid, res)}
                         isRoundOver={isRoundSummary} 
                         marketFluctuation={marketFluctuation}
+                        recentEvents={recentEvents} // Pass recentEvents to Simulator
                     />
                 </div>
             </div>
@@ -638,6 +685,7 @@ const App: React.FC = () => {
         onCustomerAction={() => {}} // Client doesn't need to callback up for this, funds update handles it
         isRoundOver={isRoundSummary} 
         marketFluctuation={marketFluctuation}
+        recentEvents={recentEvents} // Pass to PlayerView
       />;
   }
 
