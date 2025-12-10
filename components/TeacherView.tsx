@@ -1,10 +1,11 @@
 
 import React, { useState } from 'react';
 import { AgeGroup, PlayerState, MarketConfig, GameEvent } from '../types';
-import { Settings, PlayCircle, PauseCircle, RefreshCw, XCircle, FileText, Download, Mic, Send, TrendingUp, Users, Rocket, Truck, Package, CheckCircle, Info, Bot, Zap, Globe, AlertTriangle, Skull, Dice5, Percent, ArrowUp, ArrowDown, Crown, Star, Volume2, X, Database, Layers } from 'lucide-react';
+import { Settings, PlayCircle, PauseCircle, RefreshCw, XCircle, FileText, Download, Mic, Send, TrendingUp, Users, Rocket, Truck, Package, CheckCircle, Info, Bot, Zap, Globe, AlertTriangle, Skull, Dice5, Percent, ArrowUp, ArrowDown, Crown, Star, Volume2, X, Database, Layers, Edit3 } from 'lucide-react';
 import { speakAnnouncement, generateGameReport } from '../services/geminiService';
 import { GAME_EVENTS } from '../constants';
 import ReactMarkdown from 'react-markdown';
+import { p2p } from '../services/p2p';
 
 interface TeacherViewProps {
   ageGroup: AgeGroup;
@@ -88,7 +89,11 @@ const TeacherView: React.FC<TeacherViewProps> = ({
   const handleBroadcast = (textOverride?: string) => {
       const msg = textOverride || broadcastMsg;
       if (!msg) return;
+      // 1. Play local TTS for teacher
       speakAnnouncement(msg, ageGroup);
+      // 2. Send text to students/screen (They will see it in the log, they can implemented local TTS if needed)
+      p2p.broadcastEvent(msg);
+      
       if (!textOverride) setBroadcastMsg('');
   };
 
@@ -96,6 +101,7 @@ const TeacherView: React.FC<TeacherViewProps> = ({
       onSetEvent(event);
       const msg = `📢 全局事件更新: ${event.name}！${event.description}`;
       speakAnnouncement(msg, ageGroup);
+      p2p.broadcastEvent(msg);
   };
 
   // Generate Report and Show Modal
@@ -509,6 +515,18 @@ const TeacherView: React.FC<TeacherViewProps> = ({
                     <TrendingUp className="w-5 h-5"/> 基础运营配置
                 </h3>
                 <div className="space-y-6">
+                        {/* Game Name Update */}
+                        <div>
+                             <label className="block text-sm font-bold text-gray-600 mb-2 flex items-center gap-1"><Edit3 size={14}/> 活动/游戏名称</label>
+                             <input 
+                                type="text"
+                                value={eventName}
+                                onChange={(e) => setEventName(e.target.value)}
+                                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm font-bold focus:ring-2 focus:ring-purple-500 outline-none"
+                                placeholder="请输入活动名称 (显示在大屏左上角)"
+                             />
+                        </div>
+
                         <div>
                             <label className="block text-sm font-bold text-gray-600 mb-2">每轮时长与客流</label>
                             <div className="grid grid-cols-2 gap-4">

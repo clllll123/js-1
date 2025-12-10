@@ -75,6 +75,7 @@ export interface MarketConfig {
   
   // NEW: "Card Hand" Logic
   baseCustomerCount: number; // Fixed number of customers dealt per round (e.g., 3)
+  customerSpawnRate?: number; // legacy support
   
   storageFeeRate: number; // Cost per item per round for unsold stock
   logisticsFeeRate: number; // Cost per item when buying
@@ -161,4 +162,23 @@ export interface PlayerState {
   activeCampaign: 'none' | 'flyer' | 'influencer'; // Marketing boost for current round
   serverCustomerQueue: CustomerCard[]; // This is now the "Hand" of customers
   processedCustomerCount: number; // Tracks how many customers from the queue have been handled locally
+}
+
+// --- NETWORK TYPES ---
+export interface P2PPayload {
+    type: 'GAME_SYNC' | 'PLAYER_UPDATE' | 'GAME_EVENT';
+    payload: any;
+}
+
+export interface GameSyncPayload {
+    eventName: string; // Added for syncing title
+    isGameStarted: boolean;
+    isRunning: boolean;
+    timeLeft: number;
+    roundNumber: number;
+    currentGlobalEvent: GameEvent;
+    marketConfig: MarketConfig;
+    marketFluctuation: MarketFluctuation | null;
+    players: PlayerState[]; // For leaderboard
+    recentEvents: string[];
 }

@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Role, AgeGroup, PlayerState, MarketConfig, GameEvent, CustomerCard, MarketFluctuation, ProductCategory } from './types';
+import { Role, AgeGroup, PlayerState, MarketConfig, GameEvent, CustomerCard, MarketFluctuation, ProductCategory, GameSyncPayload } from './types';
 import BigScreenView from './components/BigScreenView';
 import TeacherView from './components/TeacherView';
 import PlayerView from './components/PlayerView';
 import { Smartphone, SplitSquareHorizontal, X, Presentation, UserCog } from 'lucide-react';
 import { speakAnnouncement, generateAICustomerBatch } from './services/geminiService';
 import { GAME_EVENTS, generateCustomer } from './constants';
+import { p2p } from './services/p2p';
 
 // Helper to generate random fluctuation
 // force: true ignores the 30% chance and guarantees a fluctuation
@@ -116,7 +117,9 @@ const App: React.FC = () => {
                   return { ...player, serverCustomerQueue: [...player.serverCustomerQueue, ...personalizedCards] };
               }));
               const diffText = bias === 'easy' ? '（友好团）' : bias === 'hard' ? '（挑战团）' : bias === 'chaos' ? '（捣乱团）' : '';
-              handleGameEvent(`🤖 系统空投了 ${count} 位 AI 顾客${diffText}！`);
+              const msg = `🤖 系统空投了 ${count} 位 AI 顾客${diffText}！`;
+              handleGameEvent(msg);
+              p2p.broadcastEvent(msg);
               speakAnnouncement("注意！一批性格各异的新客户刚刚到达商业中心！", ageGroup);
           } else {
               // Just add to pool
@@ -150,6 +153,26 @@ const App: React.FC = () => {
           }
       }
   }, [timeLeft, isRunning, isGameStarted, isRoundSummary]);
+
+  // --- NETWORKING: BROADCAST LOOP (HOST) ---
+  useEffect(() => {
+      if ((role === 'teacher' || role === 'screen') && isGameStarted) {
+          // Broadcast state every second or when key things change
+          const payload: GameSyncPayload = {
+              eventName, // Sync Title
+              isGameStarted,
+              isRunning,
+              timeLeft,
+              roundNumber,
+              currentGlobalEvent,
+              marketConfig,
+              marketFluctuation,
+              players: connectedPlayers,
+              recentEvents
+          };
+          p2p.broadcastGameSync(payload);
+      }
+  }, [timeLeft, isRunning, connectedPlayers, currentGlobalEvent, marketFluctuation, isGameStarted, role, eventName]);
 
 
   // Unified function to distribute cards using pool
@@ -225,7 +248,7 @@ const App: React.FC = () => {
 
   // --- PLAYER CALLBACKS ---
   const handleCustomerAction = (playerId: string, customerId: string, result: 'satisfied' | 'angry') => {
-      // Logic unchanged
+      // Host side logic tracked in connectedPlayers state
   };
 
   // --- TIMER LOGIC ---
@@ -264,6 +287,25 @@ const App: React.FC = () => {
       setConnectedPlayers([]);
       setIsGameStarted(false);
       setRecentEvents([]);
+      
+      // Initialize P2P Host
+      p2p.initHost(code, (id) => {
+          console.log("P2P Room Created:", id);
+      });
+      p2p.setCallbacks({
+          onPlayerUpdate: (playerData) => {
+              setConnectedPlayers(prev => {
+                  const existing = prev.find(p => p.id === playerData.id || p.name === playerData.name);
+                  if (existing) {
+                      return prev.map(p => p.id === existing.id ? { ...existing, ...playerData } : p);
+                  } else {
+                      // New join via network
+                      return [...prev, { ...playerData, serverCustomerQueue: [] }];
+                  }
+              });
+          }
+      });
+
       return code;
   };
 
@@ -272,60 +314,73 @@ const App: React.FC = () => {
       setIsRunning(true); 
       setIsRoundSummary(false);
       
-      // Use currently selected event (set by Teacher in Dashboard) rather than re-rolling
       const evt = currentGlobalEvent;
-      
-      // Ensure fluctuation is consistent.
-      // If manual random trigger wasn't used, we might need to generate one now if null.
       let fluc = marketFluctuation;
       if (!fluc && Math.random() > 0.5) {
-          // 50% chance to add flavor on start if not set
           fluc = generateFluctuation(evt);
           setMarketFluctuation(fluc);
       }
       
-      // Initial Generation
       replenishCustomerPool(10, evt);
 
-      // Deal Initial Hand!
       const initialCount = marketConfig.baseCustomerCount || 3;
       distributeCustomers(initialCount);
 
-      setRecentEvents(prev => [`🚀 游戏正式开始！每人派发 ${initialCount} 位顾客！`, ...prev]);
+      const msg = `🚀 游戏正式开始！每人派发 ${initialCount} 位顾客！`;
+      setRecentEvents(prev => [msg, ...prev]);
+      p2p.broadcastEvent(msg);
   };
 
   const handlePlayerJoin = (name: string, room: string): boolean => {
-      if (room !== roomCode) return false;
-      const existingPlayer = connectedPlayers.find(p => p.name === name);
-      if (existingPlayer) return true; 
+      // In Local/Split mode, check logic locally
+      if (role === 'split') {
+        if (room !== roomCode) return false;
+        const existingPlayer = connectedPlayers.find(p => p.name === name);
+        if (existingPlayer) return true; 
 
-      const newPlayer: PlayerState = {
-          id: `p-${Date.now()}`,
-          name: name,
-          shopName: '未命名店铺',
-          shopLogo: null,
-          avatar: null,
-          funds: 0,
-          inventory: [],
-          logs: [],
-          totalProfit: 0,
-          lastTurnProfit: 0,
-          marketingLevel: 1,
-          currentTurn: 1,
-          status: 'lobby',
-          reputation: 100, 
-          activeCampaign: 'none',
-          serverCustomerQueue: [],
-          processedCustomerCount: 0
-      };
-      setConnectedPlayers(prev => [...prev, newPlayer]);
+        const newPlayer: PlayerState = {
+            id: `p-${Date.now()}`,
+            name: name,
+            shopName: '未命名店铺',
+            shopLogo: null,
+            funds: 0,
+            inventory: [],
+            logs: [],
+            totalProfit: 0,
+            lastTurnProfit: 0,
+            marketingLevel: 1,
+            currentTurn: 1,
+            status: 'lobby',
+            reputation: 100, 
+            activeCampaign: 'none',
+            serverCustomerQueue: [],
+            processedCustomerCount: 0
+        };
+        setConnectedPlayers(prev => [...prev, newPlayer]);
+        return true;
+      }
+      
+      // In Network mode, PlayerView handles P2P connection init
+      // We just validate the room code format locally, actual check happens in P2P handshake
       return true;
   };
 
   const handlePlayerUpdate = (playerData: Partial<PlayerState> & { name: string }) => {
-      setConnectedPlayers(prev => prev.map(p => 
-          p.name === playerData.name ? { ...p, ...playerData } : p
-      ));
+      if (role === 'split') {
+        setConnectedPlayers(prev => prev.map(p => 
+            p.name === playerData.name ? { ...p, ...playerData } : p
+        ));
+      } else if (role === 'student') {
+        // Send to host
+        // We need to merge with a full object structure if possible, but Partial is okay
+        // ID is crucial. PlayerView generates ID.
+        // We'll rely on p2p.sendPlayerUpdate called inside PlayerView or here?
+        // Actually, PlayerView calls this on changes.
+        // We need to ensure ID is present.
+        if (playerData.id) {
+            p2p.sendPlayerUpdate(playerData as PlayerState);
+        }
+      }
   };
 
   const handleGameEvent = (message: string) => {
@@ -338,29 +393,25 @@ const App: React.FC = () => {
 
   const handleToggleTimer = () => setIsRunning(!isRunning);
   
-  // Teacher manually starts next round from Summary Screen
   const handleResetRound = () => {
       setIsRunning(false);
-      setIsRoundSummary(false); // Exit summary
+      setIsRoundSummary(false); 
       setTimeLeft(marketConfig.roundDuration);
       setRoundNumber(prev => prev + 1);
       
       const nextEvent = GAME_EVENTS[Math.floor(Math.random() * GAME_EVENTS.length)];
       setCurrentGlobalEvent(nextEvent);
-      setMarketFluctuation(generateFluctuation(nextEvent)); // New Fluctuation
+      setMarketFluctuation(generateFluctuation(nextEvent)); 
       
-      // Start generating new customers for this new event immediately
       replenishCustomerPool(10, nextEvent);
 
-      // Reset Campaign Status and Queue Progress
       setConnectedPlayers(prev => prev.map(p => ({
           ...p,
           activeCampaign: 'none',
-          serverCustomerQueue: [], // Clear old queue
-          processedCustomerCount: 0 // Reset progress tracking
+          serverCustomerQueue: [], 
+          processedCustomerCount: 0 
       })));
 
-      // DEAL NEW CARDS
       const count = marketConfig.baseCustomerCount || 3;
       distributeCustomers(count);
 
@@ -368,21 +419,17 @@ const App: React.FC = () => {
       handleGameEvent(`📢 市场情报: ${nextEvent.name}`);
   };
 
-  // Smart Random Event Trigger
   const handleTriggerRandomEvent = () => {
-      // 1. Pick a random event from the existing list
       const randomEvent = GAME_EVENTS[Math.floor(Math.random() * GAME_EVENTS.length)];
-      
-      // 2. Forcefully generate a fluctuation related to it (true = force)
       const fluctuation = generateFluctuation(randomEvent, true);
       
-      // 3. Update States
       setCurrentGlobalEvent(randomEvent);
       setMarketFluctuation(fluctuation);
       
-      // 4. Notify
       const fluctuationText = fluctuation ? (fluctuation.type === 'crash' ? `📉 ${fluctuation.category}价格暴跌` : `📈 ${fluctuation.category}价格飞涨`) : '';
-      handleGameEvent(`🎲 智能随机事件触发: ${randomEvent.name} ${fluctuationText}`);
+      const msg = `🎲 智能随机事件触发: ${randomEvent.name} ${fluctuationText}`;
+      handleGameEvent(msg);
+      p2p.broadcastEvent(msg);
       
       const voiceText = `注意！市场发生随机变动！${randomEvent.name}来了。${fluctuation ? `受${fluctuation.reason}影响，${fluctuation.category}类的进货价格出现${fluctuation.type === 'crash' ? '暴跌' : '暴涨'}！` : ''}`;
       speakAnnouncement(voiceText, ageGroup);
@@ -402,6 +449,7 @@ const App: React.FC = () => {
       setTimeLeft(180);
       setIsRoundSummary(false);
       setAiCustomerPool([]);
+      p2p.destroy();
   };
 
   const [splitLeftView, setSplitLeftView] = useState<'screen' | 'teacher'>('teacher');
@@ -462,17 +510,14 @@ const App: React.FC = () => {
         </div>
 
         <div className="w-[400px] bg-gray-200 flex flex-col items-center justify-center p-4 shadow-2xl relative bg-checkerboard">
-            <div className="text-gray-500 text-xs mb-2 font-mono flex items-center gap-1"><Smartphone size={12}/> iPhone 14 Pro Simulator</div>
+            <div className="text-gray-500 text-xs mb-2 font-mono flex items-center gap-1"><Smartphone size={12}/> iPhone 14 Pro Simulator (Local Mode)</div>
             <div className="w-full h-[85vh] bg-black rounded-[3rem] border-8 border-gray-800 shadow-xl overflow-hidden relative ring-4 ring-gray-300/20">
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-7 bg-black rounded-b-2xl z-50"></div>
                 <div className="w-full h-full bg-white overflow-y-auto scrollbar-hide">
                     <PlayerView 
                         ageGroup={ageGroup} 
                         onBack={reset} 
-                        onJoin={(name, room) => {
-                            if (room !== roomCode) { alert("房间号不正确"); return false; }
-                            return handlePlayerJoin(name, room);
-                        }}
+                        onJoin={(name, room) => handlePlayerJoin(name, room)}
                         onUpdate={handlePlayerUpdate}
                         isGameStarted={isGameStarted}
                         onGameEvent={handleGameEvent}
@@ -530,6 +575,8 @@ const App: React.FC = () => {
     );
   }
 
+  // --- NETWORKED MODES ---
+
   if (role === 'screen') {
       return <BigScreenView 
         ageGroup={ageGroup} connectedPlayers={connectedPlayers} roomCode={roomCode} eventName={eventName} recentEvents={recentEvents} timeLeft={timeLeft} roundNumber={roundNumber} isRunning={isRunning} isGameStarted={isGameStarted} currentEvent={currentGlobalEvent}
@@ -545,13 +592,41 @@ const App: React.FC = () => {
   }
 
   if (role === 'student') {
-      const myPlayer = connectedPlayers.find(p => p.name === localStorage.getItem('last_player_name'));
+      // In Network mode, myPlayer logic is handled inside PlayerView via P2P syncing
+      // We don't have the full player list in App.tsx for students usually, 
+      // but for simplicity we can let PlayerView manage its local state and just sync up.
       return <PlayerView 
         ageGroup={ageGroup} 
-        onBack={() => setRole(null)} 
+        onBack={reset} 
         onJoin={(name, room) => {
-            if (room !== roomCode) { alert("房间号不正确"); return false; }
-            return handlePlayerJoin(name, room);
+            // P2P connect logic
+            return new Promise((resolve) => {
+                p2p.initClient(room, () => {
+                    // Setup listener
+                    p2p.setCallbacks({
+                        onGameSync: (data) => {
+                            setEventName(data.eventName); // Sync Title
+                            setIsGameStarted(data.isGameStarted);
+                            setIsRunning(data.isRunning);
+                            setTimeLeft(data.timeLeft);
+                            setRoundNumber(data.roundNumber);
+                            setCurrentGlobalEvent(data.currentGlobalEvent);
+                            setMarketConfig(data.marketConfig);
+                            setMarketFluctuation(data.marketFluctuation);
+                            setRecentEvents(data.recentEvents);
+                            
+                            // Also update connectedPlayers for leaderboard view if needed
+                            if(data.players) setConnectedPlayers(data.players);
+                        },
+                        onGameEvent: (msg) => {
+                            setRecentEvents(prev => [msg, ...prev].slice(0, 20));
+                        }
+                    });
+                    resolve(true);
+                });
+                // Fallback timeout if connection fails?
+                setTimeout(() => resolve(false), 5000);
+            }) as any; 
         }}
         onUpdate={handlePlayerUpdate}
         isGameStarted={isGameStarted}
@@ -559,8 +634,8 @@ const App: React.FC = () => {
         marketConfig={marketConfig}
         currentGlobalEvent={currentGlobalEvent}
         globalRoundNumber={roundNumber}
-        serverPlayerState={myPlayer || null}
-        onCustomerAction={(cid, res) => myPlayer && handleCustomerAction(myPlayer.id, cid, res)}
+        serverPlayerState={connectedPlayers.find(p => p.name === localStorage.getItem('last_player_name')) || null} 
+        onCustomerAction={() => {}} // Client doesn't need to callback up for this, funds update handles it
         isRoundOver={isRoundSummary} 
         marketFluctuation={marketFluctuation}
       />;
