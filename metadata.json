@@ -1,0 +1,7 @@
+{
+  "name": "青少年商业实践乐园",
+  "description": "一款适合6-16岁青少年的适龄商业模拟游戏，将趣味玩法与真实商业逻辑相结合。",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
