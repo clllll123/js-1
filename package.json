@@ -1,26 +1,31 @@
+
 {
-  "name": "青少年商业实践乐园",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "name": "biz-sim-game",
+  "version": "1.0.0",
+  "description": "Commercial Simulation Game with Gemini AI and PeerJS",
+  "main": "server.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "start": "parcel index.html --no-cache",
+    "build": "parcel build index.html --dist-dir dist --no-cache",
+    "serve": "node server.js"
   },
   "dependencies": {
-    "@google/genai": "^1.31.0",
-    "react": "^19.2.1",
-    "recharts": "^3.5.1",
-    "react-dom": "^19.2.1",
-    "lucide-react": "^0.556.0",
-    "prop-types": "^15.8.1",
-    "react-markdown": "^10.1.0"
+    "express": "^4.18.2",
+    "peer": "^1.0.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.1",
+    "recharts": "^2.7.2",
+    "react-markdown": "^8.0.7",
+    "@google/genai": "^0.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "parcel": "^2.9.3",
+    "process": "^0.11.10",
+    "buffer": "^6.0.3",
+    "events": "^3.3.0",
+    "typescript": "^5.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
   }
 }

@@ -3,7 +3,20 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { AgeGroup, PlayerState, CustomerCard, GameEvent, CustomerTrait, CustomerIntent, ProductCategory, ChatMessage } from "../types";
 
 const getClient = () => {
-    const apiKey = process.env.API_KEY || '';
+    let apiKey = '';
+    
+    // 1. Check standard Node process (Build time or Node env)
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+        apiKey = process.env.API_KEY;
+    } 
+    // 2. Check Browser Polyfill (Runtime injection via window)
+    else if (typeof window !== 'undefined' && (window as any).process?.env?.API_KEY) {
+        apiKey = (window as any).process.env.API_KEY;
+    }
+
+    // Filter out placeholders if they leaked through
+    if (apiKey === '__API_KEY_PLACEHOLDER__') apiKey = '';
+
     return new GoogleGenAI({ apiKey });
 };
 
