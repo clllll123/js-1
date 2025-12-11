@@ -85,6 +85,11 @@ export interface MarketConfig {
   hotItemSurcharge: number; // e.g. 0.2 for 20% increase
   coldItemDiscount: number; // e.g. 0.2 for 20% discount
   upgradeCostMultiplier: number; // e.g. 1.0 for normal, 0.5 for cheap upgrades
+
+  // NEW: Smart Traffic Control
+  smartTrafficEnabled: boolean;
+  smartTrafficCooldown: { min: number; max: number }; // Seconds (e.g., 15-60)
+  smartTrafficWave: { min: number; max: number }; // Customer count (e.g., 2-5)
 }
 
 export interface NegotiationAction {
@@ -119,7 +124,10 @@ export interface CustomerCard {
   age: number;
   trait: CustomerTrait; 
   traitLabel: string; 
-  budget: number;
+  
+  // REPLACED: budget is removed in favor of willingnessMultiplier
+  // This represents how many times the BASE COST they are willing to pay (e.g. 1.5x)
+  willingnessMultiplier: number; 
   
   intent: CustomerIntent; 
   
@@ -165,13 +173,16 @@ export interface PlayerState {
 }
 
 // --- NETWORK TYPES ---
+export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
+
 export interface P2PPayload {
     type: 'GAME_SYNC' | 'PLAYER_UPDATE' | 'GAME_EVENT';
     payload: any;
 }
 
 export interface GameSyncPayload {
-    eventName: string; // Added for syncing title
+    eventName: string; 
+    ageGroup: AgeGroup; // CRITICAL: Sync AgeGroup to clients
     isGameStarted: boolean;
     isRunning: boolean;
     timeLeft: number;
@@ -179,6 +190,6 @@ export interface GameSyncPayload {
     currentGlobalEvent: GameEvent;
     marketConfig: MarketConfig;
     marketFluctuation: MarketFluctuation | null;
-    players: PlayerState[]; // For leaderboard
+    players: PlayerState[]; 
     recentEvents: string[];
 }

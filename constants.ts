@@ -15,6 +15,22 @@ export const SHOP_LEVELS_SENIOR: ShopLevelConfig[] = [
     { level: 3, name: '全球旗舰店', description: '行业标杆，资本雄厚，渠道通天。', maxStock: 200, maxCustomers: 15, upgradeCost: 8000, imageEmoji: '🌇' },
 ];
 
+// --- MARKET FLAVOR TEXT FOR TICKER ---
+export const MARKET_NEWS_TICKER = [
+    "据传：下周原材料价格可能波动，请各位店主做好准备。",
+    "市场分析：年轻群体对高科技产品的关注度正在上升。",
+    "天气预报：明日可能有雨，雨具类商品需求或将增加。",
+    "行业快讯：某知名投资人正在寻找潜力店铺进行投资。",
+    "政策解读：为了刺激消费，管理处可能会发放消费券。",
+    "街坊传闻：隔壁镇的游客团即将到达商业街。",
+    "专家建议：保持充足的现金流是应对危机的关键。",
+    "系统公告：请注意监控库存水位，避免断货。",
+    "热点追踪：社交媒体上关于‘复古玩具’的讨论量激增。",
+    "物流提醒：近期货运繁忙，补货请提前规划。",
+    "经济观察：整体市场消费指数环比上涨 0.5%。",
+    "每日一句：顾客的满意度就是店铺的生命线。"
+];
+
 // --- 2. MASSIVE PRODUCT DATABASE ---
 
 const createProduct = (id: string, name: string, cat: ProductCategory, cost: number, price: number, level: number): Product => ({
@@ -215,7 +231,22 @@ export const GAME_EVENTS: GameEvent[] = [
     { id: 'e60', name: '年终大奖发放', description: '手里有钱了，专门买贵的！', boostedCategories: ['luxury', 'tech'], priceMultiplier: 1.1, trafficMultiplier: 1.6, icon: '💰' },
 ];
 
-export const CUTE_LOGOS = ['🐼', '🐱', '🦊', '🦁', '🐸', '🦄', '🐙', '🚀', '🍭', '🎨', '🎮', '🏰', '🎩', '✨', '🦖', '🐝', '🐳', '🍎', '🍩', '⚽'];
+export const CUTE_LOGOS = [
+    // Animals
+    '🐼', '🐱', '🦊', '🦁', '🐸', '🦄', '🐙', '🦖', '🐝', '🐳', '🦜', '🦩', '🦥', '🦦', '🐇', '🐕', '🦋', '🐧', '🐢', '🦓',
+    // Food & Drink
+    '🍎', '🍩', '🍔', '🍟', '🍕', '🌭', '🍿', '🍱', '🍙', '🍰', '🍦', '🍉', '🍓', '🥑', '🥥', '🥐', '☕', '🥤', '🍹', '🍬',
+    // Tech & Gadgets
+    '🚀', '🎮', '⌚', '📷', '💻', '📱', '🎧', '🕹️', '🔋', '💡', '🔌', '📡', '🔭', '🔬', '⚙️', '🤖', '👾', '🛸', '🛰️', '⌨️',
+    // Fashion & Luxury
+    '🎩', '👑', '💍', '💎', '🕶️', '👒', '👗', '👠', '👜', '💄', '👛', '📿', '🧵', '🧶', '🧥', '🥾', '🌂', '🎀', '💈', '⚜️',
+    // Sports & Hobbies
+    '⚽', '🏀', '🏈', '🎾', '🎱', '🏓', '🏆', '🥇', '🎸', '🎹', '🎺', '🎻', '🎨', '🖌️', '🎭', '🎬', '🎪', '🎢', '🎡', '🎠',
+    // Buildings & Places
+    '🏰', '⛺', '🏠', '🏡', '🏢', '🏬', '🏭', '🏥', '🏦', '🏨', '🏪', '🏫', '🗽', '🗼', '🏯', '🏟️', '🏖️', '🏝️', '🏕️', '🌋',
+    // Misc Cool
+    '✨', '🔥', '💧', '🌈', '☀️', '🌙', '⭐', '⚡', '❄️', '🍀', '🍁', '🍄', '🌵', '🌴', '⚓', '💣', '🎈', '🎉', '🎁', '🧿'
+];
 
 export const MAX_TURNS_JUNIOR = 6;
 export const MAX_TURNS_SENIOR = 8;
@@ -246,10 +277,18 @@ export const generateCustomer = (turn: number, event: GameEvent, canHaveRefunds:
     else if (roll < 0.95 && !canHaveRefunds) intent = 'consulting'; 
     else intent = 'thief';
 
-    // Budget
-    let baseBudget = 50 + Math.floor(Math.random() * 450); 
-    if (trait === 'quality_first' || trait === 'trend_follower') baseBudget *= 1.5;
-    if (trait === 'price_sensitive') baseBudget *= 0.7;
+    // REMOVED: Fixed budget logic.
+    // ADDED: Willingness Multiplier logic based on Traits
+    let baseMultiplier = 1.2; // Default willing to pay 1.2x cost (very low profit)
+    
+    // Adjust based on traits
+    if (trait === 'quality_first' || trait === 'trend_follower') baseMultiplier = 1.8; // Willing to pay high premium
+    if (trait === 'impulsive') baseMultiplier = 1.5; 
+    if (trait === 'price_sensitive') baseMultiplier = 1.1; // Only wants cheap stuff
+    if (trait === 'skeptical') baseMultiplier = 1.3;
+
+    // Add Random Variance (+/- 0.2)
+    const willingnessMultiplier = baseMultiplier + (Math.random() * 0.4 - 0.2);
     
     // --- PREFERENCE LOGIC (TIERED PROBABILITY) ---
     // High (Boosted): 50%
@@ -330,7 +369,7 @@ export const generateCustomer = (turn: number, event: GameEvent, canHaveRefunds:
         age: 10 + Math.floor(Math.random() * 50),
         trait,
         traitLabel: intent === 'returning' ? '售后处理' : (intent === 'thief' ? '可疑人员' : (intent === 'browsing' ? '闲逛路人' : traitLabels[trait])),
-        budget: Math.floor(baseBudget),
+        willingnessMultiplier, // NEW: Replaces budget
         intent,
         preferredCategories: prefs,
         story: `来自社区的${name}，今天心情${Math.random() > 0.5 ? '不错' : '一般'}。`,

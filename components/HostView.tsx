@@ -62,7 +62,7 @@ const HostView: React.FC<HostViewProps> = ({ ageGroup, onBack, isPreview = false
   const handleTimeUp = () => {
       setIsRunning(false);
       setIsTimeUp(true);
-      speakAnnouncement("本轮交易时间结束，请各位店长停止交易，准备结算。", ageGroup);
+      // Removed automatic speech to prevent chaos. Use manual broadcast if needed.
   };
 
   const handleResetRound = () => {
@@ -92,7 +92,7 @@ const HostView: React.FC<HostViewProps> = ({ ageGroup, onBack, isPreview = false
 
   const handleGlobalEvent = (event: string) => {
       const msg = `⚠️ 市场突发事件: ${event}`;
-      speakAnnouncement(msg, ageGroup);
+      speakAnnouncement(msg, ageGroup); // This is local manual trigger, acceptable
   };
 
   const handleExportReport = async () => {

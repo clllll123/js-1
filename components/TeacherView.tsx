@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
-import { AgeGroup, PlayerState, MarketConfig, GameEvent } from '../types';
-import { Settings, PlayCircle, PauseCircle, RefreshCw, XCircle, FileText, Mic, Send, Globe, Dice5, Monitor, Rocket, X, Sliders, TrendingUp, Download, ChevronDown } from 'lucide-react';
+import { AgeGroup, PlayerState, MarketConfig, GameEvent, ConnectionStatus } from '../types';
+import { Settings, PlayCircle, PauseCircle, RefreshCw, XCircle, FileText, Mic, Send, Globe, Dice5, Monitor, Rocket, X, Sliders, TrendingUp, Download, ChevronDown, Megaphone, Clock, Users, Zap, Clock3 } from 'lucide-react';
 import { speakAnnouncement, generateGameReport } from '../services/geminiService';
 import { GAME_EVENTS } from '../constants';
 import ReactMarkdown from 'react-markdown';
@@ -29,6 +30,9 @@ interface TeacherViewProps {
   onSetEvent: (event: GameEvent) => void;
   onTriggerRandomEvent?: () => void; 
   recentEvents: string[]; 
+  connectionStatus: ConnectionStatus;
+  aiStatus: 'idle' | 'processing';
+  setAiStatus: (status: 'idle' | 'processing') => void;
 }
 
 const TeacherView: React.FC<TeacherViewProps> = (props) => {
@@ -45,25 +49,34 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
       }
   }, [props.isGameStarted]);
 
-  const handleBroadcast = () => {
-      if (!broadcastMsg) return;
-      speakAnnouncement(broadcastMsg, props.ageGroup);
-      p2p.broadcastEvent(broadcastMsg);
-      setBroadcastMsg('');
+  const handleBroadcast = (text?: string) => {
+      const msg = text || broadcastMsg;
+      if (!msg) return;
+      speakAnnouncement(msg, props.ageGroup);
+      p2p.broadcastEvent(msg);
+      if (!text) setBroadcastMsg(''); // Only clear input if sent from input
   };
 
   const handleReport = async () => {
       setIsGenReport(true);
       setReportModal(true);
+      props.setAiStatus('processing');
       const txt = await generateGameReport(props.connectedPlayers, props.eventName);
       setReportText(txt);
+      props.setAiStatus('idle');
       setIsGenReport(false);
   };
 
   const handleQuickIntervention = (type: string) => {
       const msg = `⚠️ 市场突发调控: ${type}`;
-      speakAnnouncement(msg, props.ageGroup);
-      p2p.broadcastEvent(msg);
+      handleBroadcast(msg);
+  };
+
+  const handleForceDistribute = () => {
+      // Force distribute 2 customers to everyone
+      props.onGenerateAICustomers(1, true);
+      const msg = "🔔 叮咚！一大波顾客刚刚进入商场！";
+      handleBroadcast(msg);
   };
 
   return (
@@ -82,11 +95,13 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                 isRunning={props.isRunning}
                 isGameStarted={props.isGameStarted}
                 currentEvent={props.currentEvent}
+                connectionStatus={props.connectionStatus}
+                aiStatus={props.aiStatus}
             />
         </div>
 
-        {/* OVERLAY: CONTROL BUTTON */}
-        <div className="absolute top-4 right-4 z-50">
+        {/* OVERLAY: CONTROL BUTTON - MOVED TO BOTTOM RIGHT */}
+        <div className="absolute bottom-4 right-4 z-50">
             <button 
                 onClick={() => setShowPanel(!showPanel)}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-bold shadow-2xl transition-all border-2 ${showPanel ? 'bg-gray-900 text-white border-gray-700' : 'bg-white text-indigo-600 border-white hover:scale-105'}`}
@@ -98,7 +113,7 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
 
         {/* DRAWER: ADMIN PANEL (RESTORED FULL FUNCTIONALITY) */}
         <div className={`absolute top-0 right-0 h-full w-[550px] bg-slate-900/95 backdrop-blur-xl shadow-2xl z-40 transition-transform duration-300 ease-in-out border-l border-slate-700 flex flex-col text-slate-100 ${showPanel ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className="p-6 pt-20 overflow-y-auto flex-1 space-y-6">
+            <div className="p-6 pt-10 overflow-y-auto flex-1 space-y-6 pb-20">
                 
                 {/* 1. HEADER & PRE-GAME */}
                 {!props.isGameStarted && (
@@ -169,12 +184,93 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                     </div>
                 )}
 
-                {/* 3. DIFFICULTY & ECONOMY (RESTORED) */}
+                {/* 3. DIFFICULTY & ECONOMY (Updated with Smart Traffic) */}
                 <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 shadow-sm">
                     <h3 className="text-lg font-black text-purple-300 mb-6 flex items-center gap-2">
-                        <Sliders size={20}/> 市场环境配置 (难度)
+                        <Sliders size={20}/> 客流控制中心 (Traffic Engine)
                     </h3>
+                    
                     <div className="space-y-6">
+                         {/* Manual Traffic Push */}
+                         {props.isGameStarted && (
+                             <button 
+                                onClick={handleForceDistribute}
+                                className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-transform"
+                             >
+                                 <Users size={20}/> 手动派发一波客人 (所有人 +1)
+                             </button>
+                         )}
+                         
+                         <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-700">
+                             <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-2">
+                                    <Zap size={16} className={props.marketConfig.smartTrafficEnabled ? "text-yellow-400 fill-yellow-400" : "text-gray-500"} />
+                                    <label className="text-sm font-bold text-white">智能自动客流 (Smart Traffic)</label>
+                                </div>
+                                <div 
+                                    onClick={() => props.onUpdateMarketConfig({ smartTrafficEnabled: !props.marketConfig.smartTrafficEnabled })}
+                                    className={`w-12 h-6 rounded-full cursor-pointer relative transition-colors ${props.marketConfig.smartTrafficEnabled ? 'bg-green-500' : 'bg-slate-600'}`}
+                                >
+                                    <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${props.marketConfig.smartTrafficEnabled ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                                </div>
+                             </div>
+
+                             {props.marketConfig.smartTrafficEnabled && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                                    <div>
+                                        <div className="flex justify-between mb-1">
+                                            <label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Clock3 size={12}/> 冷却时间 (随机范围)</label>
+                                            <span className="text-xs font-mono font-bold text-cyan-400">{props.marketConfig.smartTrafficCooldown.min}s - {props.marketConfig.smartTrafficCooldown.max}s</span>
+                                        </div>
+                                        <div className="flex gap-2 items-center">
+                                            <input 
+                                                type="number" 
+                                                min="5" max="30" 
+                                                value={props.marketConfig.smartTrafficCooldown.min} 
+                                                onChange={(e) => props.onUpdateMarketConfig({ smartTrafficCooldown: { ...props.marketConfig.smartTrafficCooldown, min: Number(e.target.value) } })}
+                                                className="w-16 bg-slate-800 border border-slate-600 rounded text-center text-xs p-1 text-white"
+                                            />
+                                            <span className="text-slate-500">-</span>
+                                            <input 
+                                                type="number" 
+                                                min="30" max="120" 
+                                                value={props.marketConfig.smartTrafficCooldown.max} 
+                                                onChange={(e) => props.onUpdateMarketConfig({ smartTrafficCooldown: { ...props.marketConfig.smartTrafficCooldown, max: Number(e.target.value) } })}
+                                                className="w-16 bg-slate-800 border border-slate-600 rounded text-center text-xs p-1 text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    
+                                    <div>
+                                        <div className="flex justify-between mb-1">
+                                            <label className="text-xs font-bold text-slate-400 flex items-center gap-1"><Users size={12}/> 客流波次 (随机人数)</label>
+                                            <span className="text-xs font-mono font-bold text-cyan-400">{props.marketConfig.smartTrafficWave.min}人 - {props.marketConfig.smartTrafficWave.max}人</span>
+                                        </div>
+                                        <div className="flex gap-2 items-center">
+                                            <input 
+                                                type="number" 
+                                                min="1" max="5" 
+                                                value={props.marketConfig.smartTrafficWave.min} 
+                                                onChange={(e) => props.onUpdateMarketConfig({ smartTrafficWave: { ...props.marketConfig.smartTrafficWave, min: Number(e.target.value) } })}
+                                                className="w-16 bg-slate-800 border border-slate-600 rounded text-center text-xs p-1 text-white"
+                                            />
+                                            <span className="text-slate-500">-</span>
+                                            <input 
+                                                type="number" 
+                                                min="3" max="10" 
+                                                value={props.marketConfig.smartTrafficWave.max} 
+                                                onChange={(e) => props.onUpdateMarketConfig({ smartTrafficWave: { ...props.marketConfig.smartTrafficWave, max: Number(e.target.value) } })}
+                                                className="w-16 bg-slate-800 border border-slate-600 rounded text-center text-xs p-1 text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 italic">
+                                        * 当玩家未开启营销活动时生效，模拟自然进店客流。
+                                    </div>
+                                </div>
+                             )}
+                         </div>
+
                          {/* Boom/Bust */}
                          <div>
                              <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">宏观经济 (影响预算)</label>
@@ -192,39 +288,6 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                                      📉 萧条 (预算低)
                                  </button>
                              </div>
-                         </div>
-                         
-                         {/* Skepticism */}
-                         <div>
-                             <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">客户挑剔度 (成交难度)</label>
-                             <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700">
-                                {['low', 'medium', 'high'].map((level) => (
-                                    <button 
-                                        key={level}
-                                        onClick={() => props.onUpdateMarketConfig({ skepticismLevel: level as any })}
-                                        className={`flex-1 py-2 rounded-md text-xs font-bold capitalize transition-all ${props.marketConfig.skepticismLevel === level ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
-                                    >
-                                        {level === 'low' ? '随和' : level === 'medium' ? '普通' : '挑剔'}
-                                    </button>
-                                ))}
-                             </div>
-                         </div>
-
-                         {/* Spawn Rate Slider */}
-                         <div>
-                            <div className="flex justify-between mb-2">
-                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">客流密度 (人/玩家/轮)</label>
-                                <span className="text-xs font-mono font-bold text-cyan-400">{props.marketConfig.baseCustomerCount || 3}</span>
-                            </div>
-                            <input 
-                                type="range" 
-                                min="1"
-                                max="10"
-                                step="1"
-                                value={props.marketConfig.baseCustomerCount || 3}
-                                onChange={(e) => props.onUpdateMarketConfig({ baseCustomerCount: parseInt(e.target.value) })}
-                                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
                          </div>
                     </div>
                 </div>
@@ -295,12 +358,19 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                             placeholder="输入语音通知内容..."
                             className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:border-pink-500 focus:outline-none"
                         />
-                        <button onClick={handleBroadcast} className="bg-pink-600 hover:bg-pink-500 text-white px-4 rounded-lg font-bold transition-colors"><Send size={16}/></button>
+                        <button onClick={() => handleBroadcast()} className="bg-pink-600 hover:bg-pink-500 text-white px-4 rounded-lg font-bold transition-colors"><Send size={16}/></button>
                     </div>
                     
                     <div className="flex gap-2 mb-6">
-                        <button onClick={() => {speakAnnouncement("倒计时30秒！", props.ageGroup); p2p.broadcastEvent("倒计时30秒！")}} className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 text-pink-200 text-xs font-bold rounded border border-slate-600">30s 提醒</button>
-                        <button onClick={() => {speakAnnouncement("交易结束，请停止操作！", props.ageGroup); p2p.broadcastEvent("交易结束！")}} className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 text-pink-200 text-xs font-bold rounded border border-slate-600">结束提醒</button>
+                        <button onClick={() => handleBroadcast("📢 播报：游戏正式开始！")} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-green-300 text-xs font-bold rounded border border-slate-600 flex flex-col items-center">
+                            <PlayCircle size={14} className="mb-1"/> 游戏开始
+                        </button>
+                        <button onClick={() => handleBroadcast(`📢 播报：第${props.roundNumber}轮交易结束，请停止操作！`)} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-red-300 text-xs font-bold rounded border border-slate-600 flex flex-col items-center">
+                            <XCircle size={14} className="mb-1"/> 回合结束
+                        </button>
+                        <button onClick={() => handleBroadcast("📢 播报：倒计时30秒，请抓紧时间！")} className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-yellow-300 text-xs font-bold rounded border border-slate-600 flex flex-col items-center">
+                            <Clock size={14} className="mb-1" /> 30s 提醒
+                        </button>
                     </div>
 
                     <button onClick={handleReport} className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 border border-slate-600 transition-colors">

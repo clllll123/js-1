@@ -1,380 +1,271 @@
 
-import { GoogleGenAI, Modality, Type } from "@google/genai";
-import { AgeGroup, PlayerState, CustomerCard, GameEvent, CustomerTrait, CustomerIntent, ProductCategory, ChatMessage } from "../types";
+import { ChatMessage, CustomerCard, PlayerState, AgeGroup } from "../types";
 
-const getClient = () => {
-    let apiKey = '';
-    
-    // 1. Check standard Node process (Build time or Node env)
-    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-        apiKey = process.env.API_KEY;
-    } 
-    // 2. Check Browser Polyfill (Runtime injection via window)
-    else if (typeof window !== 'undefined' && (window as any).process?.env?.API_KEY) {
-        apiKey = (window as any).process.env.API_KEY;
-    }
+// Configuration for Doubao (Volcengine) - Hardcoded for immediate use as requested
+const DOUBAO_API_KEY = "99ed81ba-a588-47f8-8144-bbe05e0a68fc";
+const DOUBAO_MODEL_ID = "ep-20251130214903-phgl6";
+const API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
 
-    // Filter out placeholders if they leaked through
-    if (apiKey === '__API_KEY_PLACEHOLDER__') apiKey = '';
-
-    return new GoogleGenAI({ apiKey });
-};
-
-// Helper for delay
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Helper to decode base64 to Uint8Array
-function base64ToBytes(base64: string): Uint8Array {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-// Helper to convert raw PCM to AudioBuffer
-function pcmToAudioBuffer(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number = 24000,
-  numChannels: number = 1
-): AudioBuffer {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
-// 1. Image Generation for Shop Design
-export const generateShopImage = async (
-    prompt: string, 
-    size: '1K' | '2K' | '4K' = '1K'
-): Promise<string | null> => {
-  const ai = getClient();
-  
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-image-preview',
-      contents: {
-        parts: [{ text: prompt }],
-      },
-      config: {
-        imageConfig: {
-            aspectRatio: "1:1",
-            imageSize: size
-        }
-      }
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    return null;
-  } catch (error) {
-    console.error("Image generation failed:", error);
-    return null;
-  }
-};
-
-// 2. Business Advisor (Thinking Model)
-export const getBusinessAdvice = async (
-  context: string, 
-  question: string, 
-  ageGroup: AgeGroup
-): Promise<string> => {
-  const ai = getClient();
-  const tone = ageGroup === AgeGroup.Junior 
-    ? "你是一个友好的、充满鼓励的猫头鹰卡通导师。请用简单易懂的语言对10岁的孩子说话。中文回答。" 
-    : "你是一位专业的商业顾问。回答要简洁、具有战略性，并关注投资回报率（ROI）和风险管理。中文回答。";
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: `背景: ${context}\n\n用户问题: ${question}`,
-      config: {
-        systemInstruction: tone,
-        thinkingConfig: { thinkingBudget: 2048 } 
-      }
-    });
-    return response.text || "我正在查看市场数据，请稍后再试。";
-  } catch (error) {
-    console.error("Advice generation failed:", error);
-    return "与商业中心的连接不稳定。";
-  }
-};
-
-// 3. TTS for Announcements (Voice Broadcast) with Retry Logic
-export const speakAnnouncement = async (text: string, ageGroup: AgeGroup): Promise<void> => {
-  const ai = getClient();
-  const voiceName = ageGroup === AgeGroup.Junior ? 'Kore' : 'Puck'; 
-  const MAX_RETRIES = 3;
-  let retryCount = 0;
-
-  while (retryCount < MAX_RETRIES) {
+/**
+ * Helper to call Doubao API (OpenAI Compatible Interface)
+ */
+async function callDoubaoAPI(messages: any[], temperature: number = 0.5, maxTokens: number = 1000): Promise<string> {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${DOUBAO_API_KEY}`
             },
-          },
-        },
-      });
+            body: JSON.stringify({
+                model: DOUBAO_MODEL_ID,
+                messages: messages,
+                temperature: temperature,
+                max_tokens: maxTokens // SPEED OPTIMIZATION: Limits total generation time
+            })
+        });
 
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const bytes = base64ToBytes(base64Audio);
-          const audioBuffer = pcmToAudioBuffer(bytes, audioCtx, 24000, 1);
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(audioCtx.destination);
-          source.start();
-      }
-      return; // Success, exit
-    } catch (error: any) {
-      // Check if the error is due to overloading (503)
-      const isOverloaded = error?.message?.includes('overloaded') || error?.status === 503 || error?.code === 503;
-      
-      if (isOverloaded && retryCount < MAX_RETRIES - 1) {
-        retryCount++;
-        const delay = 1000 * Math.pow(2, retryCount - 1); // 1000ms, 2000ms, 4000ms
-        console.warn(`TTS Model overloaded. Retrying in ${delay}ms... (Attempt ${retryCount}/${MAX_RETRIES})`);
-        await sleep(delay);
-      } else {
-        console.error("TTS failed:", error);
-        break; // Exit loop if not retrying
-      }
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error("Doubao API Error:", response.status, errText);
+            throw new Error(`API Error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
+    } catch (error) {
+        console.error("Network/API Error:", error);
+        throw error;
     }
-  }
+}
+
+const cleanJson = (text: string): string => {
+    // 1. Remove markdown code blocks if present
+    let cleaned = text.replace(/```json\n?|```/g, "").trim();
+    
+    // 2. Extract substring between the first '{' and the last '}' 
+    const firstOpen = cleaned.indexOf('{');
+    const lastClose = cleaned.lastIndexOf('}');
+    
+    if (firstOpen !== -1 && lastClose !== -1) {
+        cleaned = cleaned.substring(firstOpen, lastClose + 1);
+    }
+    
+    return cleaned;
 };
 
-// 4. Quick Analysis for Settlement (Flash)
-export const analyzePerformance = async (financialData: string, ageGroup: AgeGroup): Promise<string> => {
-    const ai = getClient();
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `请简要分析这个游戏表现：${financialData}。`,
-            config: {
-                systemInstruction: ageGroup === AgeGroup.Junior 
-                    ? "用中文回答。以有趣的方式给出1个赞扬和1个建议。"
-                    : "用中文回答。提供2个关键点的执行摘要，分析利润驱动因素和亏损点。"
-            }
-        });
-        return response.text || "分析完成。";
-    } catch (e) {
-        return "数据处理错误。";
-    }
-}
-
-// 5. Generate Whole Game Report (Host)
-export const generateGameReport = async (players: PlayerState[], eventName: string): Promise<string> => {
-    const ai = getClient();
-    const dataSummary = players.map(p => `${p.shopName}(店长:${p.name}): 总利润¥${p.totalProfit}, 最终资金¥${p.funds}, 营销等级Lv${p.marketingLevel}`).join('\n');
+// NEW: Content sanitizer to fix AI hallucinations like "1. ", "3啊", or missing chars
+const sanitizeDialogue = (text: string): string => {
+    if (!text) return text;
     
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-3-pro-preview", 
-            contents: `请为"${eventName}"商业模拟活动生成一份详细的经营分析报告。\n\n玩家数据:\n${dataSummary}`,
-            config: {
-                systemInstruction: "你是一位资深的商业评论员。请生成一份Markdown格式的报告。包含：1. 市场概况（总产值、竞争烈度）。2. 明星店铺点评（表扬前三名）。3. 经营问题洞察（发现普遍存在的问题）。4. 给所有学员的总结寄语。语气专业且充满鼓励。",
-                thinkingConfig: { thinkingBudget: 2048 }
-            }
-        });
-        return response.text || "报告生成失败。";
-    } catch (e) {
-        console.error(e);
-        return "生成报告时发生错误。";
-    }
-}
+    let clean = text;
 
-// 6. NEW: Generate AI Customer Batch (Pre-generation)
-export const generateAICustomerBatch = async (
-    count: number, 
-    round: number, 
-    event: GameEvent,
-    bias: 'random' | 'easy' | 'hard' | 'chaos' = 'random'
-): Promise<CustomerCard[]> => {
-    const ai = getClient();
-    
-    // Schema definition to ensure strict JSON structure matching CustomerCard (mostly)
-    const schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                name: { type: Type.STRING },
-                avatar: { type: Type.STRING, description: "A single emoji representing the person" },
-                age: { type: Type.NUMBER },
-                trait: { type: Type.STRING, enum: ['price_sensitive', 'quality_first', 'impulsive', 'skeptical', 'trend_follower'] },
-                traitLabel: { type: Type.STRING, description: "Chinese label for trait e.g. '精打细算'" },
-                budget: { type: Type.NUMBER },
-                intent: { type: Type.STRING, enum: ['buying', 'consulting', 'browsing', 'returning', 'thief'] },
-                preferredCategories: { type: Type.ARRAY, items: { type: Type.STRING } },
-                story: { type: Type.STRING, description: "Short backstory in Chinese" },
-                need: { type: Type.STRING, description: "Specific shopping need in Chinese" },
-                
-                dialogueOpening: { type: Type.STRING, description: "First thing they say. MUST BE NATURAL." },
-                
-                // New Detailed Reactions
-                reactions: {
-                    type: Type.OBJECT,
-                    properties: {
-                        expensive: { type: Type.STRING, description: "What they say if price is high. Colloquial Chinese." },
-                        cheap: { type: Type.STRING, description: "What they say if price is low/good. Colloquial Chinese." },
-                        flattery: { type: Type.STRING, description: "Response to emotional praise. Colloquial Chinese." },
-                        logic: { type: Type.STRING, description: "Response to logical specs explanation. Colloquial Chinese." },
-                        angry: { type: Type.STRING, description: "What they say when they leave angrily." },
-                        happy: { type: Type.STRING, description: "What they say when they buy successfully." },
-                    },
-                    required: ["expensive", "cheap", "flattery", "logic", "angry", "happy"]
-                },
+    // 1. Remove leading LIST NUMBERS (e.g. "1. ", "1、", "(1)")
+    // CRITICAL FIX: Do NOT remove pure numbers like "50块" or "3啊". 
+    // Only remove if followed by a dot, comma, or enclosed.
+    clean = clean.replace(/^(\d+)[\.\、\)]\s*/g, ""); 
+    clean = clean.replace(/^\((\d+)\)\s*/g, "");
 
-                basePatience: { type: Type.NUMBER },
-                baseInterest: { type: Type.NUMBER },
-                purchaseQuantity: { type: Type.NUMBER }
-            },
-            required: ["name", "avatar", "trait", "budget", "intent", "story", "dialogueOpening", "reactions", "basePatience", "baseInterest"]
-        }
-    };
+    // 2. Remove common Markdown artifacts if they leaked inside the string
+    clean = clean.replace(/\*\*/g, "");
 
-    let biasInstruction = "";
-    if (bias === 'easy') {
-        biasInstruction = "BIAS: EASY MODE. Customers should be RICH (high budget), FRIENDLY, IMPULSIVE or TREND_FOLLOWER. They should be easy to please.";
-    } else if (bias === 'hard') {
-        biasInstruction = "BIAS: HARD MODE. Customers should be POOR (low budget), SKEPTICAL or PRICE_SENSITIVE. They are grumpy, rude, and very hard to negotiate with.";
-    } else if (bias === 'chaos') {
-        biasInstruction = "BIAS: CHAOS MODE. High chance (30%) of THIEVES, SCAMMERS (Returning), or WEIRD requests. Make them unpredictable.";
+    // 3. Fix specific common typos observed
+    if (clean.startsWith("板")) {
+        clean = "老" + clean; // Fix "板有什么..." -> "老板有什么..."
     }
 
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Generate ${count} distinct retail customers for a simulation game.
-            Current Round: ${round}.
-            Global Event: ${event.name} (${event.description}).
-            Boosted Categories: ${event.boostedCategories.join(', ')}.
-            
-            ${biasInstruction}
-            
-            STRICT DIALOGUE RULES (CRITICAL):
-            1. Language must be **Colloquial Chinese (口语化中文)**. Speak like a real person, not a textbook.
-            2. **FORBIDDEN PHRASES**: Do NOT use "looking at price tag" (看价格标签), "just looking" (随便看看) repeatedly.
-            3. Make them distinct!
-               - A "Thief" should sound overly friendly or distracting.
-               - A "Price Sensitive" person should complain about inflation using slang.
-               - A "Trend Follower" should use internet slang.
-            4. Fill the 'reactions' object with specific responses based on their trait.
-               e.g. If trait is 'Skeptical', reaction to 'flattery' should be "少来这套" (Don't give me that).
-            5. Return valid JSON only.`,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: schema,
-                temperature: 1.4 // High temp for maximum variety
-            }
-        });
+    return clean.trim();
+};
 
-        const rawData = JSON.parse(response.text || "[]");
+export const speakAnnouncement = (text: string, ageGroup: AgeGroup) => {
+    // Uses browser TTS for low-latency announcements
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        // Cancel previous utterances to avoid queue buildup
+        window.speechSynthesis.cancel();
         
-        // Post-process to ensure type safety and IDs
-        return rawData.map((c: any, index: number) => ({
-            ...c,
-            id: `ai_${round}_${Date.now()}_${index}`,
-            // Ensure enums match strict types (fallback if AI hallucinates)
-            preferredCategories: (c.preferredCategories || []).filter((cat: string) => 
-                ['food', 'stationery', 'toy', 'daily', 'tech', 'luxury', 'health', 'gift', 'fun', 'book', 'sport', 'diy', 'office', 'hobby'].includes(cat)
-            ) as ProductCategory[],
-            trait: ['price_sensitive', 'quality_first', 'impulsive', 'skeptical', 'trend_follower'].includes(c.trait) ? c.trait : 'impulsive',
-            intent: ['buying', 'consulting', 'browsing', 'returning', 'thief'].includes(c.intent) ? c.intent : 'consulting'
-        }));
-
-    } catch (e) {
-        console.error("AI Customer Generation Failed:", e);
-        return []; // Return empty array so app falls back to algorithm
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'zh-CN';
+        utterance.rate = 1.2; // Slightly faster for excitement
+        window.speechSynthesis.speak(utterance);
     }
 };
 
-// 7. NEW: AI Referee for Negotiation
+export const generateGameReport = async (players: PlayerState[], eventName: string): Promise<string> => {
+    const prompt = `
+    请为商业模拟游戏"${eventName}"生成一份Markdown格式的经营分析报告。
+    玩家数据: ${JSON.stringify(players.map(p => ({ name: p.name, shop: p.shopName, profit: p.totalProfit, reputation: p.reputation })))}
+    
+    请包含以下章节:
+    1. 🏆 盈利冠军 (MVP)
+    2. ⭐ 口碑最佳店铺
+    3. 📊 整体市场分析
+    4. 💡 给玩家的未来建议
+    
+    保持语气专业且鼓励性。
+    `;
+
+    try {
+        const result = await callDoubaoAPI([
+            { role: "system", content: "你是一个专业的商业分析师助手。" },
+            { role: "user", content: prompt }
+        ]);
+        return result || "报告生成失败。";
+    } catch (e) {
+        console.error("Report generation error", e);
+        return "报告生成服务暂时不可用。";
+    }
+};
+
+export const analyzePerformance = async (metrics: string, ageGroup: AgeGroup): Promise<string> => {
+    try {
+        const result = await callDoubaoAPI([
+            { role: "system", content: "你是一个商业游戏导师，请用简短、鼓励的语言点评玩家表现。" },
+            { role: "user", content: `分析这段表现数据: ${metrics}. 目标群体: ${ageGroup === '6-12' ? '小学生' : '中学生'}。请限制在50字以内。` }
+        ]);
+        return result || "分析失败。";
+    } catch(e) {
+        console.error("Analysis error", e);
+        return "分析服务暂时不可用。";
+    }
+};
+
+// AI Referee for Negotiation (Doubao Optimized)
+// CRITICAL UPDATE: Removed fixed budget logic, added quantity lock, added turn limit force decision
 export const interactWithAICustomer = async (
     history: ChatMessage[],
     customer: CustomerCard,
     productName: string,
-    currentPrice: number
+    currentPrice: number,
+    haggleTurnCount: number, // NEW: Track how many rounds have passed
+    maxLimitPrice: number // NEW: Calculated internal limit
 ): Promise<{ text: string, outcome: 'ongoing' | 'deal' | 'leave', mood_score: number }> => {
-    const ai = getClient();
     
-    // Construct conversation history string
-    const convo = history.map(msg => `${msg.sender === 'user' ? 'Shop Owner' : 'Customer'}: ${msg.text}`).join('\n');
+    // TRUNCATE HISTORY for Context Window efficiency
+    const recentHistory = history.slice(-8); 
+    const convo = recentHistory.map(msg => `${msg.sender === 'user' ? '老板' : '顾客'}: ${msg.text}`).join('\n');
     
-    const prompt = `
-    You are playing a role-playing game. You are the CUSTOMER.
+    // Psychology Logic Construction
+    // Valuation Ratio: Current Price / Customer's Willingness Limit
+    const priceRatio = currentPrice / maxLimitPrice;
+    let psychology = "";
     
-    **YOUR PROFILE:**
-    - Name: ${customer.name}
-    - Personality: ${customer.traitLabel} (Trait ID: ${customer.trait})
-    - Max Budget: ${customer.budget} (Hidden from player)
-    - Needs: ${customer.need}
-    - Story: ${customer.story}
+    // STRICT DECISION LOGIC FOR AI
+    if (priceRatio <= 0.85) {
+        psychology = `当前价格(${currentPrice})低于我心理底线。我要假装犹豫一下，然后尽快成交，或者再砍一点点。`;
+    } else if (priceRatio <= 1.05) {
+        psychology = `当前价格(${currentPrice})接近我心理底线。很纠结，再磨一下，如果老板态度好或者稍微降点就买。`;
+    } else {
+        psychology = `太贵了！远超我心理价位。如果不能降价，我绝对不买。直接拒绝。`;
+    }
+
+    // FORCED ENDING IF HAGGLING TOO LONG
+    let forcedEndInstruction = "";
+    if (haggleTurnCount >= 4) {
+        forcedEndInstruction = `
+        **紧急指令**：谈判已经进行了${haggleTurnCount}轮，你感到厌烦了。
+        必须立即做出最终决定：
+        1. 如果价格接近心理价位(${maxLimitPrice}元左右)，直接成交(deal)。
+        2. 如果价格依然太高，直接离开(leave)。
+        **严禁**继续废话或通过(ongoing)拖延。
+        `;
+    }
+
+    const systemPrompt = `
+    你正在扮演顾客"${customer.name}"。你的性格: ${customer.traitLabel}。
     
-    **CONTEXT:**
-    - You are in a shop negotiating for: ${productName}.
-    - The shop owner is asking: ${currentPrice} RMB.
+    【核心任务】
+    你要购买商品"${productName}"。
+    你的【心理最高价】是: ${Math.floor(maxLimitPrice)}元。
+    老板报价: ${currentPrice}元。
     
-    **CONVERSATION HISTORY:**
-    ${convo}
+    ${psychology}
     
-    **YOUR TASK:**
-    Respond to the Shop Owner's last message.
-    1. Reply in natural, spoken Chinese (Colloquial). Short sentences.
-    2. Determine the outcome based on your personality and the price.
-       - If price <= your budget AND you are happy, outcome = 'deal'.
-       - If price > your budget AND they won't lower it, you might 'leave' or continue 'ongoing' to haggle.
-       - If the user is rude, 'leave'.
-       - If you are still deciding, 'ongoing'.
-    3. Return a mood score change (-10 to +10) based on what the user said.
+    【绝对规则 - 违反会导致系统崩溃】
+    1. **禁止修改数量**：你只想买 ${customer.purchaseQuantity} 个。严禁提出“买两个打折”、“多买点”之类的建议。数量是锁死的。
+    2. **禁止无限砍价**：不要没完没了。如果不合适就走。
+    3. **输出格式**：只返回JSON，不要Markdown。
+    4. **口语化**：回复要自然，不要带序号。
     
-    **RETURN JSON ONLY:**
+    ${forcedEndInstruction}
+    
+    【输出JSON格式】
     {
-      "text": "Your spoken response here...",
-      "outcome": "ongoing" | "deal" | "leave",
-      "mood_score": integer
+        "text": "你的回复内容",
+        "outcome": "deal" | "leave" | "ongoing",
+        "mood_score": -10 到 10 (整数)
     }
     `;
 
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                temperature: 1.0
-            }
-        });
+        // SPEED OPTIMIZATION: 
+        // 1. Temperature 0.4 for faster deterministic sampling
+        // 2. Max Tokens 200 (Drastically reduces latency by stopping generation early)
+        const apiCall = callDoubaoAPI([
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `历史对话:\n${convo}\n\n请回复:` }
+        ], 0.4, 200); 
+
+        const timeout = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error("Request timed out")), 10000) // 10s timeout
+        );
+
+        const responseText = await Promise.race([apiCall, timeout]);
+        const cleanedText = cleanJson(responseText);
         
-        const result = JSON.parse(response.text || "{}");
+        // Parse JSON safely
+        let result;
+        try {
+            result = JSON.parse(cleanedText);
+        } catch (jsonErr) {
+            console.warn("JSON Parse Failed, attempting fallback", responseText);
+            if (responseText.length > 0 && !responseText.includes('{')) {
+                return { text: sanitizeDialogue(responseText), outcome: 'ongoing', mood_score: 0 };
+            }
+            throw new Error("Invalid JSON format");
+        }
+
         return {
-            text: result.text || "Hmm...",
+            text: sanitizeDialogue(result.text) || "...",
             outcome: result.outcome || 'ongoing',
-            mood_score: result.mood_score || 0
+            mood_score: typeof result.mood_score === 'number' ? result.mood_score : 0
         };
-    } catch (e) {
+
+    } catch (e: any) {
         console.error("AI Interaction Failed", e);
-        return { text: "...", outcome: 'ongoing', mood_score: 0 };
+        
+        // --- ROBUST FALLBACK LOGIC (LOCAL RULES) ---
+        // If AI fails, use a simple deterministic check so game doesn't get stuck
+        const ratio = currentPrice / maxLimitPrice;
+        let fallbackOutcome: 'deal' | 'leave' | 'ongoing' = 'ongoing';
+        let fallbackText = "嗯...";
+
+        if (haggleTurnCount >= 4) {
+            // Force end
+            if (ratio <= 1.05) {
+                fallbackOutcome = 'deal';
+                fallbackText = "行吧行吧，就这个价，我买了！";
+            } else {
+                fallbackOutcome = 'leave';
+                fallbackText = "还是太贵了，不买了！";
+            }
+        } else {
+            // Normal fallback
+            if (ratio <= 0.9) {
+                fallbackOutcome = 'deal';
+                fallbackText = "价格挺公道，我要了。";
+            } else if (ratio > 1.2) {
+                fallbackOutcome = 'ongoing';
+                fallbackText = "这太贵了，便宜点吧？";
+            } else {
+                fallbackOutcome = 'ongoing';
+                fallbackText = "再少点我就拿了。";
+            }
+        }
+
+        return { 
+            text: fallbackText, 
+            outcome: fallbackOutcome, 
+            mood_score: 0 
+        };
     }
 };

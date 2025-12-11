@@ -1,11 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>青少年商业实践乐园</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script>
       // Runtime Environment Configuration injected by server
       window.__ENV__ = {
@@ -40,6 +40,9 @@
           50% { transform: translateY(5%); }
       }
       .animate-bounce-slow { animation: bounce-slow 3s infinite ease-in-out; }
+
+      /* Safe area for mobile */
+      .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     </style>
 <script type="importmap">
 {
@@ -50,7 +53,8 @@
     "@google/genai": "https://esm.sh/@google/genai@^1.32.0",
     "recharts": "https://esm.sh/recharts@^3.5.1",
     "lucide-react": "https://esm.sh/lucide-react@^0.559.0",
-    "react-markdown": "https://esm.sh/react-markdown@^10.1.0"
+    "react-markdown": "https://esm.sh/react-markdown@^10.1.0",
+    "mqtt": "https://esm.sh/mqtt@5.3.5"
   }
 }
 </script>

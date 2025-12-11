@@ -1,173 +1,179 @@
 
-import { PlayerState, GameSyncPayload, P2PPayload } from "../types";
+import mqtt from "mqtt";
+import { PlayerState, GameSyncPayload, P2PPayload, ConnectionStatus } from "../types";
 
-// Access PeerJS from the global window object since it's loaded via CDN script tag in index.html
-const Peer = (window as any).Peer;
+// MQTT Topics Structure:
+// Host Subscribes: bizsim/{roomCode}/client/+  (Wildcard for all clients)
+// Client Publishes: bizsim/{roomCode}/client/{clientId}
+// Host Publishes Broadcast: bizsim/{roomCode}/broadcast
 
 export class P2PService {
-    private peer: any;
-    private connections: any[] = [];
-    private hostConn: any = null;
+    private client: mqtt.MqttClient | null = null;
     private isHost: boolean = false;
+    private roomCode: string = "";
+    private clientId: string = "";
     private callbacks: {
         onPlayerUpdate?: (data: PlayerState) => void;
         onGameSync?: (data: GameSyncPayload) => void;
         onGameEvent?: (msg: string) => void;
+        onConnectionStatus?: (status: ConnectionStatus) => void;
     } = {};
 
-    constructor() {}
-
-    // Helper to get configuration based on environment
-    private getPeerConfig() {
-        const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-        
-        // Google's public STUN servers are highly reliable and low latency
-        const iceServers = [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
-        ];
-
-        if (isProduction) {
-            // In Google Cloud, connect to the internal signaling server on the same domain
-            // FORCE secure: true and port 443 for Cloud Run HTTPS
-            // Path must match the Express mount point + PeerServer path: /peerjs + /bizsim
-            return {
-                host: window.location.hostname,
-                port: 443,
-                path: '/peerjs/bizsim', 
-                secure: true,
-                config: { iceServers },
-                debug: 2
-            };
+    constructor() {
+        // Mobile Visibility API: Force reconnect on wake up
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    console.log("📱 App woke up. Checking connection...");
+                    if (this.client && !this.client.connected) {
+                        console.log("📱 Connection lost. Forcing reconnect...");
+                        this.client.reconnect();
+                    }
+                }
+            });
         }
+    }
 
-        // Localhost development
+    private getMqttConfig() {
+        // Using Public EMQX Broker over WSS (Secure WebSocket)
+        // Port 8084 is standard for WSS on EMQX
         return {
-            host: window.location.hostname,
-            port: window.location.port ? parseInt(window.location.port) : 9000,
-            path: '/peerjs/bizsim',
-            config: { iceServers },
-            debug: 2
+            url: 'wss://broker.emqx.io:8084/mqtt',
+            options: {
+                keepalive: 60, // 60s Heartbeat (User suggestion)
+                clean: true,   // Clean session for gaming (don't need offline msg persistence)
+                reconnectPeriod: 1000, // 1s Reconnect (User suggestion: Aggressive reconnect)
+                connectTimeout: 5000,
+                clientId: `bizsim_${Math.random().toString(16).substr(2, 8)}`,
+                // QoS 0 is used for game state (speed > reliability) in publish, but config here is general
+            }
         };
+    }
+
+    private updateStatus(status: ConnectionStatus) {
+        if (this.callbacks.onConnectionStatus) {
+            this.callbacks.onConnectionStatus(status);
+        }
     }
 
     // Init as HOST (Teacher)
     public initHost(roomCode: string, onReady: (id: string) => void) {
-        if (!Peer) {
-            alert("Network library not loaded. Please refresh.");
-            return;
-        }
-
         this.isHost = true;
-        const peerId = `bizsim-${roomCode}`;
-        const config = this.getPeerConfig();
-        
-        // Pass PeerID as first arg, config as second
-        this.peer = new Peer(peerId, config);
+        this.roomCode = roomCode;
+        this.clientId = "host";
 
-        this.peer.on('open', (id: string) => {
-            console.log('Host initialized:', id);
-            onReady(id);
+        const { url, options } = this.getMqttConfig();
+        // Host needs a stable ID if we wanted session persistence, but random is fine for this logic
+        options.clientId = `bizsim_host_${roomCode}_${Math.random().toString(16).substr(2, 4)}`;
+
+        console.log(`🔌 Connecting to MQTT Broker: ${url}`);
+        this.updateStatus('reconnecting');
+        this.client = mqtt.connect(url, options);
+
+        this.client.on('connect', () => {
+            console.log('✅ MQTT Connected');
+            this.updateStatus('connected');
+            
+            // Host subscribes to all client updates in this room
+            const topic = `bizsim/${roomCode}/client/+`;
+            this.client?.subscribe(topic, { qos: 0 }, (err) => {
+                if (!err) {
+                    console.log(`📡 Host listening on: ${topic}`);
+                    onReady(roomCode); // Host is ready immediately upon connection
+                } else {
+                    console.error("Subscribe Error:", err);
+                    alert("网络订阅失败，请刷新重试");
+                }
+            });
         });
 
-        this.peer.on('connection', (conn: any) => {
-            console.log('New student connected:', conn.peer);
-            this.connections.push(conn);
-            
-            conn.on('data', (data: P2PPayload) => {
-                this.handleData(data);
-            });
-
-            conn.on('close', () => {
-                this.connections = this.connections.filter(c => c !== conn);
-            });
-            
-            conn.on('error', (err: any) => {
-                console.error('Connection error:', err);
-            });
-        });
-
-        this.peer.on('error', (err: any) => {
-            console.error('PeerJS Error:', err);
-            if (err.type === 'unavailable-id') {
-                // If ID is taken, usually means we reloaded the page and old session is active
-                console.warn("Room ID unavailable, likely zombie session.");
-                // Try to reconnect with same ID is risky, usually better to alert user or wait
-                alert("房间号被占用或连接未完全断开，请稍等几秒后重试，或刷新页面。");
-            } else if (err.type === 'peer-unavailable') {
-                // Normal in mesh networking sometimes
-            } else if (err.type === 'network') {
-                 alert("连接服务器失败 (Network Error)。请检查网络或防火墙设置。如果是公司/学校网络，可能屏蔽了WebSocket。");
-            } else {
-                alert(`网络连接错误 (${err.type})，请尝试刷新页面。`);
+        this.client.on('message', (topic, message) => {
+            try {
+                const payload = JSON.parse(message.toString()) as P2PPayload;
+                this.handleData(payload);
+            } catch (e) {
+                console.warn("Invalid message format", e);
             }
         });
+
+        this.client.on('error', (err) => {
+            console.error("MQTT Error:", err);
+            this.updateStatus('disconnected');
+        });
         
-        this.peer.on('disconnected', () => {
-            console.log('Peer disconnected from server, reconnecting...');
-            this.peer.reconnect();
+        this.client.on('offline', () => {
+            console.warn("MQTT Offline");
+            this.updateStatus('disconnected');
+        });
+
+        this.client.on('reconnect', () => {
+            console.log("🔄 MQTT Reconnecting...");
+            this.updateStatus('reconnecting');
         });
     }
 
     // Init as CLIENT (Student)
     public initClient(roomCode: string, onConnect: () => void) {
-        if (!Peer) {
-            alert("Network library not loaded. Please refresh.");
-            return;
-        }
-
         this.isHost = false;
-        const config = this.getPeerConfig();
-        
-        // No ID provided, server generates one
-        this.peer = new Peer(config); 
+        this.roomCode = roomCode;
+        // Generate a stable client ID for this session (could use localStorage if needed)
+        this.clientId = `p_${Math.random().toString(36).substr(2, 9)}`;
 
-        this.peer.on('open', () => {
-            const hostId = `bizsim-${roomCode}`;
-            console.log('Connecting to host:', hostId);
+        const { url, options } = this.getMqttConfig();
+        options.clientId = this.clientId;
+
+        console.log(`🔌 Connecting to MQTT Broker: ${url}`);
+        this.updateStatus('reconnecting');
+        this.client = mqtt.connect(url, options);
+
+        this.client.on('connect', () => {
+            console.log('✅ MQTT Connected');
+            this.updateStatus('connected');
             
-            // Connect to host
-            const conn = this.peer.connect(hostId, {
-                reliable: true
+            // Client subscribes to Broadcasts from Host
+            const topic = `bizsim/${roomCode}/broadcast`;
+            this.client?.subscribe(topic, { qos: 0 }, (err) => {
+                if (!err) {
+                    console.log(`📡 Client listening on: ${topic}`);
+                    onConnect();
+                } else {
+                    alert("加入房间失败，网络连接不稳定");
+                }
             });
-            
-            conn.on('open', () => {
-                console.log('Connected to Host!');
-                this.hostConn = conn;
-                onConnect();
-            });
+        });
 
-            conn.on('data', (data: P2PPayload) => {
-                this.handleData(data);
-            });
-
-            conn.on('close', () => {
-                console.log("Connection to host closed");
-                alert("与主机的连接已断开");
-            });
-
-            conn.on('error', (err: any) => console.error('Connection Error', err));
+        this.client.on('message', (topic, message) => {
+            try {
+                const payload = JSON.parse(message.toString()) as P2PPayload;
+                this.handleData(payload);
+            } catch (e) {
+                console.warn("Invalid message format", e);
+            }
         });
         
-        this.peer.on('error', (err: any) => {
-            console.error("Client Peer Error:", err);
-            if (err.type === 'peer-unavailable') {
-                alert("找不到该房间号，请检查大屏是否已开启，或房间号是否输入正确。");
-            } else if (err.type === 'network') {
-                alert("连接服务器失败，请检查网络。");
-            }
+        this.client.on('reconnect', () => {
+            console.log("🔄 MQTT Reconnecting...");
+            this.updateStatus('reconnecting');
+        });
+        
+        this.client.on('error', (err) => {
+            console.error("MQTT Error:", err);
+            this.updateStatus('disconnected');
+        });
+        
+        this.client.on('offline', () => {
+            this.updateStatus('disconnected');
         });
     }
 
     private handleData(data: P2PPayload) {
         if (this.isHost) {
-            // Host logic: receiving updates from students
+            // Host logic: receiving updates from students via `bizsim/{room}/client/{id}`
             if (data.type === 'PLAYER_UPDATE' && this.callbacks.onPlayerUpdate) {
                 this.callbacks.onPlayerUpdate(data.payload);
             }
         } else {
-            // Client logic: receiving updates from host
+            // Client logic: receiving broadcast from host via `bizsim/{room}/broadcast`
             if (data.type === 'GAME_SYNC' && this.callbacks.onGameSync) {
                 this.callbacks.onGameSync(data.payload);
             }
@@ -179,26 +185,27 @@ export class P2PService {
 
     // Host: Broadcast state to all students
     public broadcastGameSync(payload: GameSyncPayload) {
-        if (!this.isHost) return;
+        if (!this.isHost || !this.client || !this.client.connected) return;
+        
+        // Optimisation: We could diff payload here, but for now we trust the React logic to debounce
         const msg: P2PPayload = { type: 'GAME_SYNC', payload };
-        this.connections.forEach(conn => {
-            if(conn.open) conn.send(msg);
-        });
+        // QoS 0 (At most once) - fast, fire and forget
+        this.client.publish(`bizsim/${this.roomCode}/broadcast`, JSON.stringify(msg), { qos: 0, retain: true }); // Retain true so new joiners get latest state
     }
 
     public broadcastEvent(message: string) {
-        if (!this.isHost) return;
+        if (!this.isHost || !this.client || !this.client.connected) return;
         const msg: P2PPayload = { type: 'GAME_EVENT', payload: message };
-        this.connections.forEach(conn => {
-            if(conn.open) conn.send(msg);
-        });
+        this.client.publish(`bizsim/${this.roomCode}/broadcast`, JSON.stringify(msg), { qos: 0 });
     }
 
     // Client: Send update to host
     public sendPlayerUpdate(payload: PlayerState) {
-        if (this.isHost || !this.hostConn || !this.hostConn.open) return;
+        if (this.isHost || !this.client || !this.client.connected) return;
+        
         const msg: P2PPayload = { type: 'PLAYER_UPDATE', payload };
-        this.hostConn.send(msg);
+        // Send to specific topic for this client
+        this.client.publish(`bizsim/${this.roomCode}/client/${this.clientId}`, JSON.stringify(msg), { qos: 0 });
     }
 
     public setCallbacks(cbs: typeof this.callbacks) {
@@ -206,7 +213,10 @@ export class P2PService {
     }
 
     public destroy() {
-        if (this.peer) this.peer.destroy();
+        if (this.client) {
+            this.client.end();
+            this.client = null;
+        }
     }
 }
 
