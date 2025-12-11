@@ -130,18 +130,23 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                             </div>
                             <div className="flex gap-4">
                                 <div className="flex-1">
-                                    <label className="text-xs font-bold text-slate-400 uppercase">初始资金</label>
-                                    <div className="font-mono font-bold text-lg text-green-400 mt-1">
-                                        {props.ageGroup === '6-12' ? '¥500' : '¥3000'}
-                                    </div>
-                                </div>
-                                <div className="flex-1">
-                                    <label className="text-xs font-bold text-slate-400 uppercase">每轮时长(秒)</label>
+                                    <label className="text-xs font-bold text-slate-400 uppercase">初始资金 (¥)</label>
                                     <input 
                                         type="number" 
-                                        value={props.marketConfig.roundDuration}
-                                        onChange={(e) => props.onUpdateMarketConfig({ roundDuration: Number(e.target.value) })}
-                                        className="w-full mt-1 p-1 bg-slate-800 border border-slate-600 rounded font-mono font-bold text-white text-center"
+                                        value={props.marketConfig.initialFunds}
+                                        onChange={(e) => props.onUpdateMarketConfig({ initialFunds: Number(e.target.value) })}
+                                        className="w-full mt-1 p-2 bg-slate-800 border border-slate-600 rounded-lg font-mono font-bold text-green-400 focus:outline-none focus:border-indigo-500"
+                                    />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="text-xs font-bold text-slate-400 uppercase">每轮时长 (分钟)</label>
+                                    <input 
+                                        type="number" 
+                                        min="1"
+                                        max="60"
+                                        value={Math.floor(props.marketConfig.roundDuration / 60)}
+                                        onChange={(e) => props.onUpdateMarketConfig({ roundDuration: Math.max(1, Number(e.target.value)) * 60 })}
+                                        className="w-full mt-1 p-2 bg-slate-800 border border-slate-600 rounded-lg font-mono font-bold text-white focus:outline-none focus:border-indigo-500"
                                     />
                                 </div>
                             </div>
@@ -249,7 +254,7 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                                         <div className="flex gap-2 items-center">
                                             <input 
                                                 type="number" 
-                                                min="1" max="5" 
+                                                min="0" max="5" 
                                                 value={props.marketConfig.smartTrafficWave.min} 
                                                 onChange={(e) => props.onUpdateMarketConfig({ smartTrafficWave: { ...props.marketConfig.smartTrafficWave, min: Number(e.target.value) } })}
                                                 className="w-16 bg-slate-800 border border-slate-600 rounded text-center text-xs p-1 text-white"
@@ -257,7 +262,7 @@ const TeacherView: React.FC<TeacherViewProps> = (props) => {
                                             <span className="text-slate-500">-</span>
                                             <input 
                                                 type="number" 
-                                                min="3" max="10" 
+                                                min="1" max="10" 
                                                 value={props.marketConfig.smartTrafficWave.max} 
                                                 onChange={(e) => props.onUpdateMarketConfig({ smartTrafficWave: { ...props.marketConfig.smartTrafficWave, max: Number(e.target.value) } })}
                                                 className="w-16 bg-slate-800 border border-slate-600 rounded text-center text-xs p-1 text-white"

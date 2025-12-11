@@ -427,7 +427,8 @@ const PlayerView: React.FC<PlayerViewProps> = ({ ageGroup, onBack, initialRoomCo
         maxTurns,
         shopName: customName || (isJunior ? '我的小店' : '未命名店铺'),
         shopLogo: finalLogo,
-        funds: isJunior ? 500 : 3000, 
+        // USE CONFIGURABLE INITIAL FUNDS
+        funds: marketConfig.initialFunds ?? (isJunior ? 500 : 3000), 
         inventory: [], 
         reputation: 100
     }));
@@ -683,7 +684,8 @@ const PlayerView: React.FC<PlayerViewProps> = ({ ageGroup, onBack, initialRoomCo
               product.name, 
               negotiationPrice,
               haggleRoundCount, // Pass current turn count
-              internalMaxPrice // Pass calculated limit
+              internalMaxPrice, // Pass calculated limit
+              customerInterest // NEW: Pass current interest for round limit logic
           );
           
           setAiApiStatus('ok');

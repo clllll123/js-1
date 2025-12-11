@@ -55,26 +55,37 @@ const cleanJson = (text: string): string => {
 };
 
 // NEW: Content sanitizer to fix AI hallucinations like "1. ", "3啊", or missing chars
+// IMPROVED: Robust Markdown stripping and safe list removal (preserves decimals)
 const sanitizeDialogue = (text: string): string => {
     if (!text) return text;
     
     let clean = text;
 
-    // 1. Remove leading LIST NUMBERS (e.g. "1. ", "1、", "(1)")
-    // CRITICAL FIX: Do NOT remove pure numbers like "50块" or "3啊". 
-    // Only remove if followed by a dot, comma, or enclosed.
-    clean = clean.replace(/^(\d+)[\.\、\)]\s*/g, ""); 
-    clean = clean.replace(/^\((\d+)\)\s*/g, "");
+    // 1. Strip Markdown chars: bold (**), italic (* or _), code (`), headers (#)
+    // We remove them completely to prevent display glitches.
+    clean = clean.replace(/[\*\_\`\#\~]/g, ""); 
 
-    // 2. Remove common Markdown artifacts if they leaked inside the string
-    clean = clean.replace(/\*\*/g, "");
+    // 2. Remove leading LIST NUMBERS (e.g. "1. ", "1、")
+    // LOGIC FIX v3: 
+    // - "1、" style: Always strip (Chinese enumeration)
+    // - "1. " style (with space): Always strip
+    // - "1." style (no space): Only strip if NOT followed by a digit (protects "1.5元" or "10.5")
+    
+    clean = clean.replace(/^(\d+)[\、]\s*/g, ""); // Remove "1、"
+    clean = clean.replace(/^(\d+)\.\s+/g, "");    // Remove "1. " (space required)
+    clean = clean.replace(/^(\d+)\.(?!\d)/g, ""); // Remove "1." ONLY if next char is NOT digit
 
     // 3. Fix specific common typos observed
+    // Handles "板..." -> "老板..."
+    // Handles "1.板..." -> "老板..." (after step 2)
     if (clean.startsWith("板")) {
-        clean = "老" + clean; // Fix "板有什么..." -> "老板有什么..."
+        clean = "老" + clean; 
     }
+    
+    // 4. Collapse multiple spaces
+    clean = clean.replace(/\s+/g, " ").trim();
 
-    return clean.trim();
+    return clean;
 };
 
 export const speakAnnouncement = (text: string, ageGroup: AgeGroup) => {
@@ -136,8 +147,9 @@ export const interactWithAICustomer = async (
     customer: CustomerCard,
     productName: string,
     currentPrice: number,
-    haggleTurnCount: number, // NEW: Track how many rounds have passed
-    maxLimitPrice: number // NEW: Calculated internal limit
+    haggleTurnCount: number, // Track how many rounds have passed
+    maxLimitPrice: number, // Calculated internal limit
+    currentInterest: number // NEW: Passed from UI to determine patience
 ): Promise<{ text: string, outcome: 'ongoing' | 'deal' | 'leave', mood_score: number }> => {
     
     // TRUNCATE HISTORY for Context Window efficiency
@@ -158,13 +170,24 @@ export const interactWithAICustomer = async (
         psychology = `太贵了！远超我心理价位。如果不能降价，我绝对不买。直接拒绝。`;
     }
 
-    // FORCED ENDING IF HAGGLING TOO LONG
+    // --- DYNAMIC ROUND LIMIT BASED ON INTEREST ---
+    // Rule:
+    // Interest < 30%: Max 1 round (Very impatient)
+    // 30% <= Interest < 50%: Max 2 rounds
+    // 50% <= Interest < 70%: Max 3 rounds
+    // Interest >= 70%: Max 4 rounds (Very patient)
+    let allowedRounds = 1;
+    if (currentInterest >= 70) allowedRounds = 4;
+    else if (currentInterest >= 50) allowedRounds = 3;
+    else if (currentInterest >= 30) allowedRounds = 2;
+
+    // FORCED ENDING LOGIC
     let forcedEndInstruction = "";
-    if (haggleTurnCount >= 4) {
+    if (haggleTurnCount >= allowedRounds) {
         forcedEndInstruction = `
-        **紧急指令**：谈判已经进行了${haggleTurnCount}轮，你感到厌烦了。
+        **紧急指令**：谈判已经进行了${haggleTurnCount}轮，你的耐心耗尽了（当前兴趣度${Math.round(currentInterest)}%，最多允许${allowedRounds}轮）。
         必须立即做出最终决定：
-        1. 如果价格接近心理价位(${maxLimitPrice}元左右)，直接成交(deal)。
+        1. 如果价格接近心理价位(${Math.floor(maxLimitPrice)}元左右)，直接成交(deal)。
         2. 如果价格依然太高，直接离开(leave)。
         **严禁**继续废话或通过(ongoing)拖延。
         `;
@@ -183,14 +206,15 @@ export const interactWithAICustomer = async (
     【绝对规则 - 违反会导致系统崩溃】
     1. **禁止修改数量**：你只想买 ${customer.purchaseQuantity} 个。严禁提出“买两个打折”、“多买点”之类的建议。数量是锁死的。
     2. **禁止无限砍价**：不要没完没了。如果不合适就走。
-    3. **输出格式**：只返回JSON，不要Markdown。
-    4. **口语化**：回复要自然，不要带序号。
+    3. **价格格式**：涉及价格时，**必须**加上符号 "¥" (如: ¥10) 或使用中文 (如: 十元)。**严禁**直接输出数字开头的句子 (如: "10块...")，这会导致系统误删。
+    4. **输出格式**：只返回JSON，不要Markdown代码块。
+    5. **口语化**：回复要自然，不要使用列表格式(1. 2.)。
     
     ${forcedEndInstruction}
     
     【输出JSON格式】
     {
-        "text": "你的回复内容",
+        "text": "你的回复内容 (价格请加¥符号)",
         "outcome": "deal" | "leave" | "ongoing",
         "mood_score": -10 到 10 (整数)
     }
@@ -239,7 +263,7 @@ export const interactWithAICustomer = async (
         let fallbackOutcome: 'deal' | 'leave' | 'ongoing' = 'ongoing';
         let fallbackText = "嗯...";
 
-        if (haggleTurnCount >= 4) {
+        if (haggleTurnCount >= allowedRounds) {
             // Force end
             if (ratio <= 1.05) {
                 fallbackOutcome = 'deal';

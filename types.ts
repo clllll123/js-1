@@ -77,6 +77,8 @@ export interface MarketConfig {
   baseCustomerCount: number; // Fixed number of customers dealt per round (e.g., 3)
   customerSpawnRate?: number; // legacy support
   
+  initialFunds: number; // Configurable starting money
+  
   storageFeeRate: number; // Cost per item per round for unsold stock
   logisticsFeeRate: number; // Cost per item when buying
   pricingThresholds: PricingThresholds; // Teacher controlled pricing logic

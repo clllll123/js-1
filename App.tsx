@@ -23,6 +23,7 @@ const App: React.FC = () => {
       roundDuration: 180, // 3 minutes
       baseCustomerCount: 3,
       customerSpawnRate: 8, // Slider visual only now
+      initialFunds: 500, // Default for Junior
       storageFeeRate: 0.5,
       logisticsFeeRate: 0.5,
       pricingThresholds: { safe: 1.5, normal: 2.5, risky: 3.5 },
@@ -30,10 +31,10 @@ const App: React.FC = () => {
       coldItemDiscount: 0.2,
       upgradeCostMultiplier: 1.0,
       
-      // Smart Traffic Defaults
+      // Smart Traffic Defaults (Updated per request)
       smartTrafficEnabled: true,
-      smartTrafficCooldown: { min: 15, max: 60 },
-      smartTrafficWave: { min: 2, max: 5 }
+      smartTrafficCooldown: { min: 30, max: 60 }, // Was 15-60
+      smartTrafficWave: { min: 0, max: 5 } // Was 2-5
   });
   const [eventName, setEventName] = useState("商业模拟挑战赛");
   const [currentGlobalEvent, setCurrentGlobalEvent] = useState<GameEvent>(GAME_EVENTS[0]);
@@ -65,6 +66,14 @@ const App: React.FC = () => {
         if (mode === 'senior') setAgeGroup(AgeGroup.Senior);
     }
   }, []);
+
+  // Update default funds when AgeGroup changes (only if in Lobby/Teacher mode)
+  useEffect(() => {
+      setMarketConfig(prev => ({
+          ...prev,
+          initialFunds: ageGroup === AgeGroup.Junior ? 500 : 3000
+      }));
+  }, [ageGroup]);
 
   // HOST LOGIC
   useEffect(() => {
@@ -169,13 +178,26 @@ const App: React.FC = () => {
       })));
   };
 
+  const handleStartGame = () => {
+      setIsGameStarted(true);
+      setIsRunning(true);
+      
+      // AUTO-TRIGGER RANDOM EVENT if we are on the default "Plain Week"
+      // This ensures the game starts with something interesting by default
+      if (currentGlobalEvent.id === GAME_EVENTS[0].id) {
+          const randomEvt = GAME_EVENTS[Math.floor(Math.random() * GAME_EVENTS.length)];
+          setCurrentGlobalEvent(randomEvt);
+          setRecentEvents(prev => [`🎲 游戏开始！随机事件触发: ${randomEvt.name}`, ...prev]);
+      }
+  };
+
   // --- HOST: TRAFFIC ENGINE V5 (Configurable Smart Traffic) ---
   
   // 1. Initial Wave on Round Start
   useEffect(() => {
       if (role === 'teacher' && isRunning) {
           // Round just started (isRunning became true)
-          // Generate Configurable 2-5 customers for everyone immediately
+          // Generate Configurable 0-5 customers for everyone immediately
           console.log("🌊 Round Start: Generating Initial Wave");
           
           setConnectedPlayers(prev => prev.map(p => {
@@ -253,13 +275,15 @@ const App: React.FC = () => {
                                const max = marketConfig.smartTrafficWave.max;
                                const smartCount = Math.floor(Math.random() * (max - min + 1)) + min;
                                
-                               // console.log(`🧠 Smart Traffic for ${p.name}: +${smartCount} customers`);
-                               const smartWave = Array.from({ length: smartCount }).map(() => generateCustomer(roundNumber, currentGlobalEvent, true));
-                               newQueue = [...newQueue, ...smartWave];
-                               modified = true;
-                               hasUpdates = true;
+                               if (smartCount > 0) {
+                                   // console.log(`🧠 Smart Traffic for ${p.name}: +${smartCount} customers`);
+                                   const smartWave = Array.from({ length: smartCount }).map(() => generateCustomer(roundNumber, currentGlobalEvent, true));
+                                   newQueue = [...newQueue, ...smartWave];
+                                   modified = true;
+                                   hasUpdates = true;
+                               }
 
-                               // Set Next Spawn Time (Random 15-60s)
+                               // Set Next Spawn Time (Random 30-60s default)
                                const nextCooldown = Math.floor(Math.random() * (marketConfig.smartTrafficCooldown.max - marketConfig.smartTrafficCooldown.min + 1)) + marketConfig.smartTrafficCooldown.min;
                                playerNextSmartSpawnRef.current[p.id] = now + (nextCooldown * 1000);
                            }
@@ -405,7 +429,7 @@ const App: React.FC = () => {
               roomCode={roomCode}
               eventName={eventName}
               setEventName={setEventName}
-              onStartGame={() => { setIsGameStarted(true); setIsRunning(true); }}
+              onStartGame={handleStartGame}
               marketConfig={marketConfig}
               onUpdateMarketConfig={(cfg) => setMarketConfig(prev => ({ ...prev, ...cfg }))}
               timeLeft={timeLeft}
